@@ -1412,6 +1412,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List My Apps
+         * @description The environments the caller may open, from the one access evaluator on a live compile.
+         *     A person's own credential only: an agent's, a CI token and any other credential are
+         *     ``FORBIDDEN``. Org admins see only what is shared with them, like everyone else.
+         */
+        get: operations["list_my_apps_v1_me_apps_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/operations/{operation_id}": {
         parameters: {
             query?: never;
@@ -1580,6 +1602,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/users/{user_id}/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Person Apps
+         * @description ``GET /v1/me/apps`` for another person of the org. Active org admins only, with their own
+         *     credential (``FORBIDDEN``); ``REFERENCE_NOT_FOUND`` for a person not in the org.
+         */
+        get: operations["list_person_apps_v1_users__user_id__apps_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/users/{user_id}/deactivate": {
         parameters: {
             query?: never;
@@ -1715,6 +1758,19 @@ export interface components {
             user_id: string;
             /** User Name */
             user_name: string;
+        };
+        /** AccessVia */
+        AccessVia: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "user" | "group" | "org";
+            /**
+             * Name
+             * @description The person's or group's name: `Former member` for a person no longer active, `Removed group` for a group gone from the directory; null for the org.
+             */
+            name: string | null;
         };
         /**
          * ActorKind
@@ -4367,6 +4423,75 @@ export interface components {
              * @description `rare`, `daily`, `session` or `heavy`, read from this month's usage after the fact; null with no usage. Never used to size or bill anything.
              */
             usage_type: ("rare" | "daily" | "session" | "heavy") | null;
+        };
+        /** UserApp */
+        UserApp: {
+            /** App Id */
+            app_id: string;
+            /**
+             * Environments
+             * @description Production before preview.
+             */
+            environments: components["schemas"]["UserAppEnvironment"][];
+            /** Owner Email */
+            owner_email: string | null;
+            /** Owner Name */
+            owner_name: string;
+            /** Slug */
+            slug: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "disabled" | "quarantined" | "deleting";
+        };
+        /** UserAppEnvironment */
+        UserAppEnvironment: {
+            /** Environment Id */
+            environment_id: string;
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "prod" | "preview";
+            /**
+             * Role
+             * @description The best role granted.
+             * @enum {string}
+             */
+            role: "builder" | "user";
+            /**
+             * Url
+             * @description As `EnvironmentOut.url`.
+             */
+            url: string | null;
+            /**
+             * Via
+             * @description The grants that count, one per subject.
+             */
+            via: components["schemas"]["AccessVia"][];
+        };
+        /** UserApps */
+        UserApps: {
+            /**
+             * Apps
+             * @description By slug; only apps with an environment to open.
+             */
+            apps: components["schemas"]["UserApp"][];
+            /**
+             * Published Version
+             * @description The org's newest published snapshot; null before the first.
+             */
+            published_version: number | null;
+            /** User Id */
+            user_id: string;
+            /** User Name */
+            user_name: string;
+            /**
+             * User Status
+             * @enum {string}
+             */
+            user_status: "active" | "invited" | "deactivated";
         };
         /** UserMatch */
         UserMatch: {
@@ -10778,6 +10903,71 @@ export interface operations {
             };
         };
     };
+    list_my_apps_v1_me_apps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserApps"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     get_operation_v1_operations__operation_id__get: {
         parameters: {
             query?: never;
@@ -11412,6 +11602,73 @@ export interface operations {
                 };
             };
             /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    list_person_apps_v1_users__user_id__apps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserApps"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED`, `REFERENCE_NOT_FOUND` */
             422: {
                 headers: {
                     [name: string]: unknown;

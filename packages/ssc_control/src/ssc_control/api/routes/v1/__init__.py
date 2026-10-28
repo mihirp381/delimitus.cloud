@@ -28,6 +28,7 @@ from ssc_control.api.routes.v1.groups import router as groups_router
 from ssc_control.api.routes.v1.inventory import router as inventory_router
 from ssc_control.api.routes.v1.logins import router as logins_router
 from ssc_control.api.routes.v1.logs import router as logs_router
+from ssc_control.api.routes.v1.open_apps import router as open_apps_router
 from ssc_control.api.routes.v1.promote import router as promote_router
 from ssc_control.api.routes.v1.schedules import router as schedules_router
 from ssc_control.api.routes.v1.secrets import router as secrets_router
@@ -41,6 +42,7 @@ router.include_router(whoami_router)
 router.include_router(apps_router)
 router.include_router(grants_router)
 router.include_router(access_router)
+router.include_router(open_apps_router)
 router.include_router(deployments_router)
 router.include_router(audit_router)
 router.include_router(approvals_router)

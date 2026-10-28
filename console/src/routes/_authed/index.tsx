@@ -6,7 +6,7 @@ import { must } from '../../api/client';
 import {
   type AppFilter,
   type AppStatus,
-  type AppSummary,
+  countText,
   DEPLOY_TONE,
   type EnvName,
   type InventoryApp,
@@ -15,6 +15,8 @@ import {
   sharingSummary,
 } from '../../api/inventory';
 import { ENV_TITLE } from '../../app-detail/names';
+import { OpenApps } from '../../apps/OpenApps';
+import { WhoCanUse } from '../../apps/WhoCanUse';
 import { Ago } from '../../components/Ago';
 import { Badge, STATUS_TONE, StatusBadge } from '../../components/Badge';
 import { Button } from '../../components/Button';
@@ -33,6 +35,15 @@ const ENV_NAMES: readonly EnvName[] = ['prod', 'preview'];
 
 const EMPTY = 'No apps yet. An app appears here once it is created.';
 const EMPTY_HINT = 'Ask your coding agent to create one, or create it with the ssc command line.';
+const NONE_SHARED = 'No apps are shared with you yet.';
+const NONE_SHARED_HINT = "Ask the app's owner or an org admin to share one with you.";
+const ADMIN_NONE_SHARED = 'Admins see every app here but open only the ones shared with them, like everyone else.';
+
+type View = 'all' | 'mine';
+const VIEW_OPTIONS: readonly { value: View; label: string }[] = [
+  { value: 'all', label: 'All apps' },
+  { value: 'mine', label: 'Apps I can open' },
+];
 
 // Keyed by the generated union: a status the API adds or removes fails the typecheck.
 const STATUS_CHOICE: Readonly<Record<AppStatus | '', string>> = {
@@ -70,15 +81,10 @@ function AppName({ id, slug, status }: { readonly id: string; readonly slug: str
   );
 }
 
-const COLUMNS: readonly Column<AppSummary>[] = [
-  { header: 'App', cell: (app) => <AppName id={app.id} slug={app.slug} status={app.status} /> },
-  { header: 'Owner', cell: (app) => <Person name={app.owner_name} email={app.owner_email} /> },
-];
-
 /**
- * The apps the caller may see. An org admin gets the inventory: each app's owner, what each
- * environment runs, when it was last used and who it is shared with. Anyone else gets the plain
- * list. Whether an app is asleep is not here: that is read live, on the app's own page.
+ * An org admin gets the inventory (each app's owner, what each environment runs, when it was last
+ * used and who it is shared with) or, as anyone else gets, the apps they may open themselves.
+ * Whether an app is asleep is not here: that is read live, on the app's own page.
  */
 function Inventory() {
   const { queries, isAdmin } = Route.useRouteContext();
@@ -86,17 +92,42 @@ function Inventory() {
   const [text, setText] = useState('');
   const [status, setStatus] = useState<AppStatus | ''>('');
   const [env, setEnv] = useState<EnvName | ''>('');
+  const [view, setView] = useState<View>('all');
   const textId = useId();
   const envId = useId();
   const admin = isAdmin(me.data);
+  const member = me.data !== undefined && !admin;
+  const inventory = admin && view === 'all';
   const filter: AppFilter = { text, status };
 
   return (
     <>
       <PageHeader
-        title="Apps"
-        purpose="The apps in your organisation: open one to see how it is running and who can use it."
+        title={member ? 'Your apps' : 'Apps'}
+        purpose={
+          member
+            ? 'The apps shared with you: open one in production or preview.'
+            : 'The apps in your organisation: open one to see how it is running and who can use it.'
+        }
+        about={
+          member ? (
+            <p>
+              An app is listed once its owner or an org admin shares it with you, with a group you
+              are in or with everyone. As a builder you can also open its page to deploy and share it.
+            </p>
+          ) : (
+            <p>
+              All apps is the whole organisation. Apps I can open is what the sharing rules let you
+              open yourself: being an admin opens no app.
+            </p>
+          )
+        }
       />
+      {admin ? (
+        <div className="toolbar view-switch">
+          <Segmented label="Show" options={VIEW_OPTIONS} value={view} onChange={setView} />
+        </div>
+      ) : null}
       <div className="search">
         <label htmlFor={textId} className="visually-hidden">
           Filter apps
@@ -104,13 +135,13 @@ function Inventory() {
         <input
           id={textId}
           type="search"
-          placeholder="Filter by slug or owner"
+          placeholder={inventory ? 'Filter by slug or owner' : 'Filter by slug or access'}
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
-        <Segmented label="Status" options={STATUS_OPTIONS} value={status} onChange={setStatus} />
-        {admin ? (
+        {inventory ? (
           <>
+            <Segmented label="Status" options={STATUS_OPTIONS} value={status} onChange={setStatus} />
             <span className="spacer" />
             <label htmlFor={envId} className="visually-hidden">
               Environment
@@ -128,43 +159,16 @@ function Inventory() {
       </div>
       {me.isPending ? (
         <Loading label="Loading apps…" />
-      ) : admin ? (
+      ) : inventory ? (
         <AdminInventory filter={filter} env={env} />
       ) : (
-        <AppList filter={filter} />
+        <OpenApps
+          text={text}
+          empty={admin ? ADMIN_NONE_SHARED : NONE_SHARED}
+          emptyHint={admin ? undefined : NONE_SHARED_HINT}
+        />
       )}
     </>
-  );
-}
-
-function countText(shown: number, all: number, more = false): string {
-  if (shown !== all) return `${shown} of ${all} apps`;
-  return `${all} ${all === 1 ? 'app' : 'apps'}${more ? ', more to load' : ''}`;
-}
-
-function AppList({ filter }: { readonly filter: AppFilter }) {
-  const { queries } = Route.useRouteContext();
-  const navigate = useNavigate();
-  const apps = queries.useQuery('get', '/v1/apps');
-  if (apps.isPending) return <Loading label="Loading apps…" />;
-  if (apps.isError) return <ProblemNotice error={apps.error} />;
-  const all = [...apps.data.apps].sort((a, b) => a.slug.localeCompare(b.slug));
-  const shown = all.filter((app) => matchesFilter({ ...app, owner: [app.owner_name, app.owner_email ?? '', app.owner_user_id] }, filter));
-  return (
-    <section className="panel">
-      <Table
-        caption="Apps in this organisation"
-        columns={COLUMNS}
-        rows={shown}
-        rowKey={(app) => app.id}
-        onOpen={(app) => void navigate({ to: '/apps/$appId', params: { appId: app.id } })}
-        empty={all.length ? 'No app matches the filter.' : EMPTY}
-        emptyHint={all.length ? 'Clear the filter to see every app.' : EMPTY_HINT}
-      />
-      <p className="muted count" aria-live="polite">
-        {countText(shown.length, all.length)}
-      </p>
-    </section>
   );
 }
 
@@ -207,29 +211,41 @@ function EnvChip({ env, usage }: { readonly env: InventoryEnvironment | undefine
 }
 
 /**
- * Who an app is shared with, in a line. With both environments on show it is production's, the
- * one people use; preview's is in the title and read out after it.
+ * Who an app is shared with, in a line, as the button that opens who can use it. With both
+ * environments on show it is production's, the one people use; preview's is in the title and
+ * read out after it.
  */
-function Sharing({ app, names }: { readonly app: InventoryApp; readonly names: readonly EnvName[] }) {
+function Access({
+  app,
+  names,
+  onOpen,
+}: {
+  readonly app: InventoryApp;
+  readonly names: readonly EnvName[];
+  readonly onOpen: (app: InventoryApp) => void;
+}) {
   const found = names.flatMap((name) => app.environments.filter((e) => e.name === name));
   const [first, ...rest] = found;
   if (!first) return <span className="muted">None</span>;
   const line = (e: InventoryEnvironment) => `${ENV_TITLE[e.name]}: ${sharingSummary(e.sharing)}`;
   return (
-    <span className="clip" title={found.map(line).join(' · ')}>
-      {sharingSummary(first.sharing)}
-      {rest.map((e) => (
-        <span key={e.environment_id} className="visually-hidden">
-          ; {line(e)}
-        </span>
-      ))}
-    </span>
+    <button type="button" className="link-btn access-btn" aria-haspopup="dialog" onClick={() => onOpen(app)}>
+      <span className="clip" title={found.map(line).join(' · ')}>
+        {sharingSummary(first.sharing)}
+        {rest.map((e) => (
+          <span key={e.environment_id} className="visually-hidden">
+            ; {line(e)}
+          </span>
+        ))}
+      </span>
+    </button>
   );
 }
 
 function AdminInventory({ filter, env }: { readonly filter: AppFilter; readonly env: EnvName | '' }) {
   const { api, queries } = Route.useRouteContext();
   const navigate = useNavigate();
+  const [who, setWho] = useState<InventoryApp | null>(null);
   const pages = useInfiniteQuery({
     queryKey: ['inventory'],
     queryFn: async ({ pageParam, signal }) =>
@@ -273,7 +289,7 @@ function AdminInventory({ filter, env }: { readonly filter: AppFilter; readonly 
       className: 'nowrap',
       cell: (app) => (app.last_used_at ? <Ago at={app.last_used_at} /> : <span className="muted">Not yet</span>),
     },
-    { header: 'Sharing', className: 'fill', cell: (app) => <Sharing app={app} names={names} /> },
+    { header: 'Access', className: 'fill', cell: (app) => <Access app={app} names={names} onOpen={setWho} /> },
   ];
 
   return (
@@ -304,6 +320,7 @@ function AdminInventory({ filter, env }: { readonly filter: AppFilter; readonly 
         ) : null}
       </div>
       {pages.isError ? <ProblemNotice error={pages.error} /> : null}
+      <WhoCanUse app={who} onClose={() => setWho(null)} />
     </section>
   );
 }
