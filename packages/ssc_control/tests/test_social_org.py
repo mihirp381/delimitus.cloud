@@ -449,7 +449,20 @@ async def test_restore_admin_in_a_social_org_needs_a_social_link(dsns: Dsns) -> 
                 "google",
             )
         assert not isinstance(found, str) and found.user_id == bob
+        carol = await invite(w, "carol@old.io")
+        domains = "update ssc.org set invite_domains = cast(:d as text[]) where id = :org"
+        await w.rows(domains, d=["example.com", "old.io"])
+        async with bound_org(w.engine, w.org) as conn:
+            target = await social.resolve(conn, w.org)
+            assert isinstance(target, social.SocialSignIn)
+            carol_profile = profile(w.wo, "2" * 21, "carol@old.io", connection_type="GoogleOAuth")
+            found = await social.find_person(conn, target, carol_profile, "google")
+        assert not isinstance(found, str) and found.user_id == carol
+        await w.rows(domains, d=["example.com"])
         before = await events_of(w.engine, w.org)
+        with pytest.raises(operator.RestoreError, match="not at the org's invite domains"):
+            await restore(w, carol)
+        assert (await who(w, carol))[:2] == ("member", "active")
         with pytest.raises(operator.RestoreError, match="has not signed in yet"):
             await restore(w, w.founder)
         assert len(await events_of(w.engine, w.org)) == len(before)

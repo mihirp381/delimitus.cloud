@@ -56,8 +56,9 @@ MAX_ORG_NAME: Final = 200
 
 _SET_CELL_LABEL = text("update ssc.org set cell_label = :label where id = :org")
 _LOCK_USER = text(
-    "select role, status from ssc.user_account where org_id = :org and id = :id for update"
+    "select role, status, email from ssc.user_account where org_id = :org and id = :id for update"
 )
+_LOCK_DOMAINS = text("select invite_domains from ssc.org where id = :org for update")
 _LINKED = text(
     "select 1 from ssc.identity_link where org_id = :org and user_id = :user "
     "and issuer = :issuer limit 1"
@@ -311,7 +312,7 @@ def _applied_at(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-async def restore_admin(  # noqa: PLR0913, C901  (keyword-only; one list of refusals)
+async def restore_admin(  # noqa: PLR0912, PLR0913, C901  (keyword-only; one list of refusals)
     conn: AsyncConnection,
     org_id: str,
     user_id: str,
@@ -329,16 +330,23 @@ async def restore_admin(  # noqa: PLR0913, C901  (keyword-only; one list of refu
     except ValueError as e:
         raise RestoreError(str(e)) from e
     applied = None if already_applied_at is None else _applied_at(already_applied_at)
-    connection = None
+    connection, domains = None, None
     if await social.mode(conn, org_id) != "social":
         connection = await connections.load(conn, org_id)
         if connection is None:
             raise RestoreError("the org has no directory connection")
+    else:
+        domains = tuple((await conn.execute(_LOCK_DOMAINS, {"org": org_id})).scalar_one())
     row = (await conn.execute(_LOCK_USER, {"org": org_id, "id": user_id})).one_or_none()
     if row is None:
         raise RestoreError(f"{user_id} is not a user of {org_id}")
     role, status = str(row[0]), str(row[1])
     await _require_link(conn, org_id, user_id, connection)
+    if applied is None and domains is not None and not social.at_domains(str(row[2]), domains):
+        raise RestoreError(
+            f"{user_id}'s address is not at the org's invite domains ({', '.join(domains)}); "
+            "add its domain with set-sign-in first"
+        )
     warnings: list[str] = []
     ref = None if connection is None else connection.admin_group_ref
     if ref is not None:
