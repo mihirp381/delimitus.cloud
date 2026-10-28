@@ -3,6 +3,7 @@ postgres:18, the fake runtime and the fake cell agent."""
 
 from __future__ import annotations
 
+import secrets
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -282,7 +283,7 @@ async def test_a_suffix_another_org_holds_already_exists(b: Bench, rival: str) -
         new_id("dom"),
         rival,
         name(b),
-        "ssc-d-0123456789ab",
+        f"ssc-d-{secrets.token_hex(6)}",
     )
     assert_problem(put(b, name(b), b.t.admin), ErrorCode.ALREADY_EXISTS)
     assert_problem(put(b, f"eu.{name(b)}", b.t.admin), ErrorCode.DOMAIN_SUFFIX_HELD)

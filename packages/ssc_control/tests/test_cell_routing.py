@@ -17,6 +17,7 @@ import asyncio
 import base64
 import json
 import logging
+import secrets
 from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
@@ -375,11 +376,10 @@ async def test_an_org_s_identity_carries_its_suffix_and_previous_suffixes(dsns: 
         before = (await router.for_org(e.org)).identity
         assert before is not None
         assert (before.suffix, before.previous_suffixes) == (None, ())
+        own = f"tools-{e.org[4:]}.testorg.com"
         with psycopg.connect(dsns.app) as conn:
             bind_org_sync(conn, e.org)
-            conn.execute(
-                "update ssc.org set apps_suffix = 'tools.testorg.com' where id = %s", (e.org,)
-            )
+            conn.execute("update ssc.org set apps_suffix = %s where id = %s", (own, e.org))
             conn.execute(
                 "insert into ssc.org_suffix_retired (org_id, suffix, until) "
                 "values (%s, %s, now() + interval '1 day')",
@@ -388,11 +388,8 @@ async def test_an_org_s_identity_carries_its_suffix_and_previous_suffixes(dsns: 
         now[0] = LABEL_SECONDS + 1
         after = (await router.for_org(e.org)).identity
         assert after is not None
-        assert (after.suffix, after.previous_suffixes) == (
-            "tools.testorg.com",
-            (f"{label}.{DOMAIN}",),
-        )
-        assert identity_suffixes(after) == ("tools.testorg.com", f"{label}.{DOMAIN}")
+        assert (after.suffix, after.previous_suffixes) == (own, (f"{label}.{DOMAIN}",))
+        assert identity_suffixes(after) == (own, f"{label}.{DOMAIN}")
     finally:
         await engine.dispose()
 
@@ -414,12 +411,12 @@ async def test_an_active_domain_not_yet_flipped_is_pre_rolled(dsns: Dsns) -> Non
     label = label_of(dsns.app, e.org)
     insert = (
         "insert into ssc.org_domain (id, org_id, suffix, zone_name, state) "
-        "values (%s, %s, 'tools.preroll.com', 'ssc-d-0123456789ab', %s)"
+        "values (%s, %s, 'tools.preroll.com', %s, %s)"
     )
     try:
         with psycopg.connect(dsns.app) as conn:
             bind_org_sync(conn, e.org)
-            conn.execute(insert, (new_id("dom"), e.org, "issuing"))
+            conn.execute(insert, (new_id("dom"), e.org, f"ssc-d-{secrets.token_hex(6)}", "issuing"))
         cell = await router.for_org(e.org)
         assert cell.domains is not None
         assert cell.identity is not None and cell.identity.previous_suffixes == ()

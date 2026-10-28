@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -561,10 +562,11 @@ async def test_the_call_names_the_org_s_own_domain_for_a_redirect(b: Bench) -> N
         b.dsn,
         b.w.org,
         "insert into ssc.org_domain (id, org_id, suffix, zone_name, state) "
-        "values (%s, %s, %s, 'ssc-d-0123456789ab', 'active')",
+        "values (%s, %s, %s, %s, 'active')",
         new_id("dom"),
         b.w.org,
         suffix,
+        f"ssc-d-{secrets.token_hex(6)}",
     )
     await sync(b, b.w.preview, declared())
     sid = live(b, b.w.preview)["tick"]["id"]
