@@ -134,6 +134,13 @@ Success: answered above 2026-10-26; decision 004 amendment drafted (CD-7.1) with
   `until = now + 30 d`, compile and publish one snapshot. Sessions on the old host are not migrated.
 - Success: one snapshot version carries the change; a request loop across all staging apps sees at most
   one 302-to-login per app and no 5xx; `ssc status` and the console show the new URLs.
+- 2026-10-28: the flip runs in the request (`POST /v1/domain/flip`), not a job: one transaction
+  locks the org row, swaps the current and previous suffix and marks the snapshot dirty, so one
+  compile carries it. It refuses `DOMAIN_NOT_READY` while any live environment would still change
+  under the org's suffix list (`reconciler.rolling`), which holds the coming suffix from the moment
+  the domain is `active` (the pre-roll), so apps roll once before the flip and once after. The
+  default suffix stays a previous one for 30 days after a flip back, as the customer suffix does
+  after a flip.
 
 **CD-4.3 Redirect from previous suffix.**
 - Gate: a host under a `previous_suffixes` entry answers `307` to the same slug, env, path and query under

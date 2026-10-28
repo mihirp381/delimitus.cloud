@@ -22,6 +22,7 @@ __all__ = [
     "lock_domain",
     "mark_stalled",
     "open_domains",
+    "restart_domain",
     "suffix_list",
     "update_state",
 ]
@@ -57,6 +58,15 @@ _LOCK = text(
     "id, org_id, suffix, zone_name, name_servers, state, observed_ns, failure, certificate, "
     "last_delegated_at, retire_after, created_at, updated_at, provider, stalled_at "
     "from ssc.org_domain where org_id = :org and id = :id for update"
+)
+_RESTART = text(
+    "update ssc.org_domain set state = 'pending_dns', failure = null, observed_ns = null, "
+    "name_servers = '{}', certificate = null, provider = :provider, last_delegated_at = null, "
+    "stalled_at = null, created_at = now(), updated_at = now(), "
+    "retire_after = now() + interval '12 months' "
+    "where org_id = :org and id = :id and state = 'failed' returning "
+    "id, org_id, suffix, zone_name, name_servers, state, observed_ns, failure, certificate, "
+    "last_delegated_at, retire_after, created_at, updated_at, provider, stalled_at"
 )
 _STALLED = text(
     "update ssc.org_domain set stalled_at = :at where org_id = :org and id = :id "
@@ -149,6 +159,14 @@ async def domain_of(conn: AsyncConnection, org_id: str) -> OrgDomain | None:
 async def lock_domain(conn: AsyncConnection, org_id: str, domain_id: str) -> OrgDomain | None:
     row = (await conn.execute(_LOCK, {"org": org_id, "id": domain_id})).one_or_none()
     return None if row is None else _row(row)
+
+
+async def restart_domain(
+    conn: AsyncConnection, org_id: str, domain_id: str, *, provider: str | None
+) -> OrgDomain:
+    """A ``failed`` row asked for again: ``pending_dns`` from now, as if new."""
+    params = {"org": org_id, "id": domain_id, "provider": provider}
+    return _row((await conn.execute(_RESTART, params)).one())
 
 
 async def mark_stalled(conn: AsyncConnection, org_id: str, domain_id: str, at: datetime) -> bool:

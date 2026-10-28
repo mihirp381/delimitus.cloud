@@ -37,6 +37,7 @@ from ssc_control.runtime.driver import (
     desired_for,
 )
 from ssc_control.runtime.specs import ReleaseSpecs, ReleaseSpecUnavailableError
+from ssc_shared.runtime import RuntimeDriverError
 
 log = logging.getLogger(__name__)
 
@@ -99,6 +100,11 @@ class Outcome:
     change: Change | None = None
 
 
+LIVE_ENVS = text(
+    "select e.id from ssc.environment e join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
+    "where e.org_id = :org and e.current_deployment_id is not null and a.status <> 'deleted' "
+    "order by e.id"
+)
 _DESIRED_ROWS = text(
     "select e.app_id, e.name, a.status, r.id, r.image_digest, d.secret_refs, "
     "db.host as db_host, db.port as db_port, a.slug, e.warm "
@@ -172,6 +178,33 @@ async def reconcile_env(  # noqa: PLR0913  (keyword-only)
             },
         )
     return outcome
+
+
+async def rolling(
+    engine: AsyncEngine,
+    driver: RuntimeDriver,
+    specs: ReleaseSpecs,
+    *,
+    org_id: str,
+    identity: AppIdentity,
+) -> int:
+    """How many of the org's live environments a pass under ``identity`` would still change;
+    one the runtime cannot be asked about counts."""
+    async with bound_org(engine, org_id) as conn:
+        env_ids = (await conn.execute(LIVE_ENVS, {"org": org_id})).scalars().all()
+    count = 0
+    for env_id in env_ids:
+        desired = await load_desired(engine, specs, org_id=org_id, env_id=env_id, identity=identity)
+        if isinstance(desired, str | Stopped):
+            continue
+        try:
+            observed = await driver.observe(desired.service)
+        except RuntimeDriverError:
+            count += 1
+            continue
+        if plan_one_change(desired, observed) is not None:
+            count += 1
+    return count
 
 
 async def reconcile_once(driver: RuntimeDriver, desired: ServiceSpec | Stopped) -> Outcome:

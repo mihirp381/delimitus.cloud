@@ -104,6 +104,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/v1/orgs/{org_id}/domain/retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retire Domain
+         * @description Retire the org's customer domain once its parent no longer delegates it, or after 12
+         *     months. ``DOMAIN_STATE`` names why not, and refuses the org's current suffix. Audited as
+         *     ``domain.retired``.
+         */
+        post: operations["retire_domain_internal_v1_orgs__org_id__domain_retire_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/approvals": {
         parameters: {
             query?: never;
@@ -1301,6 +1323,57 @@ export interface paths {
         patch: operations["patch_connection_v1_connections__name__patch"];
         trace?: never;
     };
+    "/v1/domain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Domain
+         * @description The org's suffixes, its customer domain's delegation, and whether a flip may run now.
+         *     Active org admins only.
+         */
+        get: operations["get_domain_v1_domain_get"];
+        /**
+         * Request Domain
+         * @description Ask for ``suffix`` as the org's customer domain: the cell makes its zone and
+         *     certificate, and the answer names the NS records to add at the parent. The same suffix again
+         *     changes nothing; another while one is live is ``ALREADY_EXISTS``, unless that one failed,
+         *     which it replaces. Audited as ``domain.requested``.
+         */
+        put: operations["request_domain_v1_domain_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/domain/flip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Flip Domain
+         * @description Move every app of the org to its customer suffix (``to: customer``) or back to the
+         *     default one, once every environment has rolled with the coming suffix among its origins
+         *     (``DOMAIN_NOT_READY`` until then). The suffix left stays a previous one for 30 days: its
+         *     hosts redirect. One snapshot carries the change. Audited as ``domain.flipped``.
+         */
+        post: operations["flip_domain_v1_domain_flip_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/egress": {
         parameters: {
             query?: never;
@@ -1847,6 +1920,16 @@ export interface components {
         AppList: {
             /** Apps */
             apps: components["schemas"]["AppSummary"][];
+        };
+        /** AppMoveOut */
+        AppMoveOut: {
+            /**
+             * Hosts
+             * @description Its prod and preview hosts under the coming suffix.
+             */
+            hosts: string[];
+            /** Slug */
+            slug: string;
         };
         /** AppOut */
         AppOut: {
@@ -2907,6 +2990,49 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** DelegationOut */
+        DelegationOut: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Failure */
+            failure: string | null;
+            /** Id */
+            id: string;
+            /** Last Delegated At */
+            last_delegated_at: string | null;
+            /**
+             * Name Servers
+             * @description The NS records to add at the parent zone.
+             */
+            name_servers: string[];
+            /**
+             * Observed Ns
+             * @description What each public resolver last answered for the suffix's NS.
+             */
+            observed_ns: {
+                [key: string]: string[];
+            } | null;
+            /**
+             * Provider
+             * @description Where the parent zone is hosted, when known.
+             */
+            provider: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "pending_dns" | "issuing" | "active" | "failed" | "retiring" | "retired";
+            /** Suffix */
+            suffix: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
         /** DeploymentCreate */
         DeploymentCreate: {
             /**
@@ -3075,6 +3201,30 @@ export interface components {
             /** User Id */
             user_id: string;
         };
+        /** DomainIn */
+        DomainIn: {
+            /** Suffix */
+            suffix: string;
+        };
+        /** DomainOut */
+        DomainOut: {
+            /** Apps That Move */
+            apps_that_move: components["schemas"]["AppMoveOut"][];
+            /** Current Suffix */
+            current_suffix: string;
+            /** Default Suffix */
+            default_suffix: string;
+            delegation: components["schemas"]["DelegationOut"] | null;
+            /** Previous */
+            previous: components["schemas"]["PreviousSuffixOut"][];
+            /** Ready To Flip */
+            ready_to_flip: boolean;
+            /**
+             * Rolling
+             * @description Environments not yet rolled with the coming suffix among their origins.
+             */
+            rolling: number;
+        };
         /** EgressHostOut */
         EgressHostOut: {
             /** Added By Email */
@@ -3168,7 +3318,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "REQUEST_TOO_LARGE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "DIRECTORY_MANAGED" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "CONFIRMATION_MISMATCH" | "APP_OPERATION_IN_FLIGHT" | "APP_DELETING" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "CEILING_REQUIRED" | "CONNECTOR_UNAVAILABLE" | "CONNECTION_NOT_GRANTED" | "CONNECTION_SUSPENDED" | "DATA_SNAPSHOT_STALE" | "CONNECTION_UNAVAILABLE" | "QUERY_TIMEOUT" | "CELL_UNAVAILABLE" | "TRANSIENT_CONFLICT" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "REQUEST_TOO_LARGE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "DIRECTORY_MANAGED" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "CONFIRMATION_MISMATCH" | "APP_OPERATION_IN_FLIGHT" | "APP_DELETING" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "CEILING_REQUIRED" | "CONNECTOR_UNAVAILABLE" | "CONNECTION_NOT_GRANTED" | "CONNECTION_SUSPENDED" | "DATA_SNAPSHOT_STALE" | "CONNECTION_UNAVAILABLE" | "QUERY_TIMEOUT" | "DOMAIN_NOT_READY" | "DOMAIN_STATE" | "CELL_UNAVAILABLE" | "TRANSIENT_CONFLICT" | "INTERNAL";
         /** ExplainedGrant */
         ExplainedGrant: {
             /** Grant Id */
@@ -3208,6 +3358,19 @@ export interface components {
              * @description `database`, `egress` or `connections`.
              */
             resource: string;
+        };
+        /** FlipIn */
+        FlipIn: {
+            /**
+             * Confirm
+             * @constant
+             */
+            confirm: true;
+            /**
+             * To
+             * @enum {string}
+             */
+            to: "customer" | "default";
         };
         /** GrantBody */
         GrantBody: {
@@ -3799,6 +3962,17 @@ export interface components {
              * @enum {string}
              */
             who: "approval" | "builders" | "group";
+        };
+        /** PreviousSuffixOut */
+        PreviousSuffixOut: {
+            /** Suffix */
+            suffix: string;
+            /**
+             * Until
+             * Format: date-time
+             * @description Until when its hosts redirect to the current suffix.
+             */
+            until: string;
         };
         /**
          * PrincipalKind
@@ -4892,6 +5066,111 @@ export interface operations {
             };
             /** @description `RATE_LIMITED` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    retire_domain_internal_v1_orgs__org_id__domain_retire_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DelegationOut"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `NOT_FOUND` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `DOMAIN_STATE` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `CELL_UNAVAILABLE` */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10369,6 +10648,265 @@ export interface operations {
             };
             /** @description `RATE_LIMITED` */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    get_domain_v1_domain_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `CELL_UNAVAILABLE` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    request_domain_v1_domain_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DomainIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainOut"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `ALREADY_EXISTS` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `CELL_UNAVAILABLE` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    flip_domain_v1_domain_flip_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FlipIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainOut"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REQUIRED` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `UNAUTHENTICATED` */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `FORBIDDEN`, `AGENT_SESSION_REFUSED` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_IN_FLIGHT`, `DOMAIN_NOT_READY`, `DOMAIN_STATE` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `REQUEST_TOO_LARGE` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `RATE_LIMITED` */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `CELL_UNAVAILABLE` */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

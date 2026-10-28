@@ -18,7 +18,6 @@ import logging
 from typing import Final
 
 from procrastinate import Blueprint, JobContext
-from sqlalchemy import text
 
 from ssc_control.db.bind import bound_org
 from ssc_control.db.orgs import all_org_ids
@@ -33,12 +32,6 @@ NAMESPACE: Final = "runtime"
 TICK_CRON: Final = "* * * * * */15"
 """Every 15 seconds: cron with a sixth, seconds, field."""
 RECONCILE_ENV: Final = f"{NAMESPACE}:reconcile_env"
-
-_LIVE_ENVS: Final = text(
-    "select e.id from ssc.environment e join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
-    "where e.org_id = :org and e.current_deployment_id is not null and a.status <> 'deleted' "
-    "order by e.id"
-)
 
 
 class NoRuntimeDriverError(RuntimeError):
@@ -69,7 +62,8 @@ def blueprint(*, tick_cron: str = TICK_CRON) -> Blueprint:
             if cell.runtime is None:
                 continue
             async with bound_org(ports.engine, org_id) as conn:
-                env_ids = (await conn.execute(_LIVE_ENVS, {"org": org_id})).scalars().all()
+                live = await conn.execute(reconciler.LIVE_ENVS, {"org": org_id})
+                env_ids = live.scalars().all()
                 for env_id in env_ids:
                     job_id = await defer(
                         conn,

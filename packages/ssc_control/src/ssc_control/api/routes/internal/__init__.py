@@ -9,8 +9,10 @@ arrives with SSC-016.
 from fastapi import APIRouter
 
 from ssc_control.api.routes.internal.directory import router as directory_router
+from ssc_control.api.routes.internal.domains import router as domains_router
 from ssc_control.api.routes.internal.heartbeat import router as heartbeat_router
 
 router = APIRouter(prefix="/internal/v1", tags=["internal"])
 router.include_router(heartbeat_router)
 router.include_router(directory_router)
+router.include_router(domains_router)

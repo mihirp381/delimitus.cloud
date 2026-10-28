@@ -110,6 +110,9 @@ class ErrorCode(StrEnum):
     DATA_SNAPSHOT_STALE = "DATA_SNAPSHOT_STALE"
     CONNECTION_UNAVAILABLE = "CONNECTION_UNAVAILABLE"
     QUERY_TIMEOUT = "QUERY_TIMEOUT"
+    # customer domains (CD-4)
+    DOMAIN_NOT_READY = "DOMAIN_NOT_READY"
+    DOMAIN_STATE = "DOMAIN_STATE"
     # placement
     CELL_UNAVAILABLE = "CELL_UNAVAILABLE"
     # ours
@@ -505,6 +508,17 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         "The data source took too long to answer.",
         "The read ran past its time limit and was stopped. Retry later, or raise the "
         "connection's timeout.",
+    ),
+    ErrorCode.DOMAIN_NOT_READY: CatalogueEntry(
+        409,
+        "The apps have not all rolled for the new address yet.",
+        "Some app environments still run without the coming address among their allowed "
+        "origins, so nothing was changed. Retry once GET /v1/domain says ready_to_flip.",
+    ),
+    ErrorCode.DOMAIN_STATE: CatalogueEntry(
+        409,
+        "The domain is not in a state that allows this.",
+        "Nothing was changed. Read GET /v1/domain for the domain's state.",
     ),
     ErrorCode.CELL_UNAVAILABLE: CatalogueEntry(
         503,
