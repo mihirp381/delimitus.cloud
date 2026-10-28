@@ -77,7 +77,7 @@ def test_no_dollar_figure_outside_the_cost_section() -> None:
 
 def test_nothing_is_loaded_from_another_origin() -> None:
     text = _text_without_styles()
-    assert text.count(f'href="{SIGN_IN}"') == 2
+    assert text.count(f'href="{SIGN_IN}"') == 1
     text = text.replace(f'href="{SIGN_IN}"', "")
     assert re.findall(r"""(?:src|href|action|srcset)\s*=\s*["']?(?:https?:)?//""", text) == []
     assert "@import" not in HTML
@@ -319,6 +319,7 @@ REMOVED = (
     "Opinionated on purpose",
     "No custom domains",
     "No inbound webhooks",
+    "Measured: one prompt to a running preview",
 )
 ADDED = (
     "Secure data connections",
@@ -330,6 +331,7 @@ ADDED = (
     "Pioneer Haulage",
     'Building apps with AI is <span class="grad">easy and fun.</span>',
     "Deploying and maintaining hundreds of them is hard and expensive.",
+    "<span>Preview in minutes.</span>",
 )
 
 
