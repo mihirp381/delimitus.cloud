@@ -855,8 +855,9 @@ class Cell:
             project=self.pid,
             role_id="sscCellAgentDomains",
             title="SSC cell agent: customer domains",
-            description="Zones, records and certificates under ssc-d- names; no zone delete on "
-            "purpose (customer domains, decision 004 amendment pending CD-7).",
+            description="Zones, records and certificates of customer domains, no zone delete on "
+            "purpose (decision 004, amendment 2026-10-28); the agent's code names only ssc-d- "
+            "resources.",
             permissions=list(DOMAINS_PERMISSIONS),
             opts=self._o(),
         )
