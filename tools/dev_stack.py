@@ -30,7 +30,9 @@ Login against real WorkOS staging tenants (SSC-019, ``docs/runbooks/ssc-019-logi
 connection. ``auth`` runs the auth host at ``--public-url`` (default ``http://localhost:<port>``,
 whose ``/callback`` must be a redirect URI in WorkOS) and the directory sync every minute. It
 reads ``SSC_WORKOS_API_KEY`` and ``SSC_WORKOS_CLIENT_ID`` from the environment only, and signs
-with the dev key under the dev issuer, so ``serve`` accepts what it issues.
+with the dev key under the dev issuer, so ``serve`` accepts what it issues. The console's OAuth
+client and the CORS on ``/token`` and ``/revoke`` are for ``--console-url`` (else
+``SSC_CONSOLE_URL``, else ``http://localhost:5173``, where ``npm run dev`` serves the console).
 """
 
 import argparse
@@ -50,7 +52,9 @@ from typing import Any
 
 import psycopg
 import uvicorn
+from fastapi import FastAPI
 from psycopg import sql
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ssc_contracts.audit import ActorKind
 from ssc_control import worker
@@ -84,6 +88,7 @@ KID = "dev-1"
 BLOB_KID = "dev-blob-1"
 ADMIN_SUBJECT = "dev-admin"
 DEV_OPERATOR = "op_dev"
+DEV_CONSOLE_URL = "http://localhost:5173"
 WORKOS_ENV = ("SSC_WORKOS_API_KEY", "SSC_WORKOS_CLIENT_ID")
 STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
 
@@ -329,7 +334,9 @@ def _auth_keys(d: Path) -> dict[str, str]:
     return {k: state[k] for k in ("auth_state_key", "auth_cell_secret")}
 
 
-def auth_settings(d: Path, public_url: str, env: dict[str, str] | None = None) -> AuthSettings:
+def auth_settings(
+    d: Path, public_url: str, env: dict[str, str] | None = None, console_url: str | None = None
+) -> AuthSettings:
     e = dict(os.environ if env is None else env)
     missing = [name for name in WORKOS_ENV if not e.get(name)]
     if missing:
@@ -348,25 +355,31 @@ def auth_settings(d: Path, public_url: str, env: dict[str, str] | None = None) -
         auth_url=public_url.rstrip("/"),
         environment="dev",
         dev_cell_secret=keys["auth_cell_secret"],
+        console_url=(console_url or e.get("SSC_CONSOLE_URL") or DEV_CONSOLE_URL).rstrip("/"),
     )
 
 
-def auth(d: Path, host: str, port: int, public_url: str | None) -> None:
-    s = auth_settings(d, public_url or f"http://localhost:{port}")
-    workos = WorkOSClient(
-        api_key=s.workos_api_key, client_id=s.workos_client_id, base=s.workos_base
-    )
-    app = create_auth_app(
+def auth_app(s: AuthSettings, workos: WorkOSClient, engine: AsyncEngine) -> FastAPI:
+    return create_auth_app(
         AuthHost(
             settings=s,
-            engine=make_engine(s.database_dsn),
+            engine=engine,
             workos=workos,
             signer=Signer(s.signing_pem, KID, ISSUER),
             callers=DevCallers(s.dev_cell_secret),
         )
     )
+
+
+def auth(d: Path, host: str, port: int, public_url: str | None, console_url: str | None) -> None:
+    s = auth_settings(d, public_url or f"http://localhost:{port}", console_url=console_url)
+    workos = WorkOSClient(
+        api_key=s.workos_api_key, client_id=s.workos_client_id, base=s.workos_base
+    )
+    app = auth_app(s, workos, make_engine(s.database_dsn))
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info"))
     print(f"SSC_AUTH_URL={s.auth_url}", flush=True)  # noqa: T201
+    print(f"SSC_CONSOLE_URL={s.console_url}", flush=True)  # noqa: T201
     asyncio.run(_auth_with_sync(server, s))
 
 
@@ -454,6 +467,7 @@ def main(argv: list[str] | None = None) -> None:
     p_auth.add_argument("--host", default="127.0.0.1")
     p_auth.add_argument("--port", type=int, default=8100)
     p_auth.add_argument("--public-url", help="default http://localhost:<port>")
+    p_auth.add_argument("--console-url", help=f"default $SSC_CONSOLE_URL or {DEV_CONSOLE_URL}")
 
     p_sso = sub.add_parser("sso-org", help="an org connected to a WorkOS directory")
     p_sso.add_argument("--workos-org", required=True)
@@ -484,7 +498,7 @@ def main(argv: list[str] | None = None) -> None:
             )
         )
     elif args.command == "auth":
-        auth(d, args.host, args.port, args.public_url)
+        auth(d, args.host, args.port, args.public_url, args.console_url)
     elif args.command == "sso-org":
         print(f"SSC_ORG_ID={sso_org(d, args)}")  # noqa: T201
     else:

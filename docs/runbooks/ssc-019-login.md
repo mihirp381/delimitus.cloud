@@ -311,9 +311,71 @@ Not yet run. Tick each line and record the date and the `usr_` ids under Record.
 - [ ] Deactivate a signed-in person from People: their next console request and `ssc whoami` fail,
       and the command line's refresh fails.
 - [ ] Reactivate them: they sign in again with the same `usr_` id.
-- [ ] `create-social-org` on the staging or pilot cell; its admin signs in with Google and People
-      shows them as an active admin.
+- [ ] `create-social-org` on the staging or pilot cell, or on the rig (below); its admin signs
+      in with Google and People shows them as an active admin.
 - [ ] That admin invites one person, who signs in with Google.
+
+### The last two lines on the rig **[real]**
+
+The real console (`npm run dev`) signs in through the rig auth host; no cell is needed, and the
+cell label is only recorded. In WorkOS staging: `http://localhost:8100/callback` is a redirect
+URI and Google OAuth is enabled (the shared test credentials are fine). Use two Google accounts.
+
+Terminal 1, from the repository root (any free port instead of 55432):
+
+```sh
+docker run -d --rm --name ssc-rig-pg -e POSTGRES_PASSWORD=pw -p 55432:5432 postgres:18
+until docker exec ssc-rig-pg pg_isready -q -h 127.0.0.1 -U postgres; do sleep 1; done
+eval "$(uv run python tools/dev_stack.py up --dsn postgresql://postgres:pw@localhost:55432/postgres)"
+LABEL=l$(openssl rand -hex 6)
+ORG=$(uv run python -m ssc_control.identity create-social-org --name "Rig pilot" \
+  --admin-email <admin's Google address> --providers google --cell-label $LABEL --operator op_<you>)
+echo $ORG
+uv run python tools/dev_stack.py serve --port 8000
+```
+
+`up` exports `SSC_DATABASE_DSN` as the rig's `ssc_app` role (also `database_dsn` in
+`.ssc-dev/state.json`), which `create-social-org` uses; at its prompts, type the admin address
+again, then `confirm`.
+
+Terminal 2, with your WorkOS staging keys (this terminal only, never in a file):
+
+```sh
+export SSC_WORKOS_API_KEY=<staging sk_test_…> SSC_WORKOS_CLIENT_ID=<staging client_…>
+uv run python tools/dev_stack.py auth --port 8100
+```
+
+It prints `SSC_AUTH_URL=http://localhost:8100` and `SSC_CONSOLE_URL=http://localhost:5173`.
+
+Terminal 3:
+
+```sh
+cd console && npm ci && VITE_SSC_AUTH_URL=http://localhost:8100 npm run dev
+```
+
+`/v1` goes to the API on 127.0.0.1:8000 (`SSC_API_URL` to change it). The access token's audience
+and issuer need nothing set: the console asks for `https://api.delimitus.com`, and `serve` trusts
+the dev issuer the auth host signs with.
+
+In the browser, at `http://localhost:5173` exactly (not `127.0.0.1`, whose origin the auth host
+does not allow):
+
+1. `/login`, enter `$ORG`, Continue: the chooser shows Google only. Sign in as the admin.
+   People shows them Active, Admin.
+2. People, Invite by email, the second Google address: it shows Invited.
+3. In a private window, `http://localhost:5173/login`, `$ORG`, Google as the second account: the
+   console opens. Back in the admin's window, People shows them Active.
+
+Check (any terminal):
+
+```sh
+docker exec ssc-rig-pg psql -U postgres -c "select email, role, status from ssc.user_account where org_id = '<org_…>' order by role, email"
+docker exec ssc-rig-pg psql -U postgres -c "select seq, action, actor_id, target_id from ssc.audit_event where org_id = '<org_…>' and action in ('user.invited', 'login.succeeded') order by seq"
+```
+
+Pass: both people `active` (the admin `admin`); the audit has `user.invited` (operator) and
+`login.succeeded` for the admin, then `user.invited` by the admin's `usr_` and
+`login.succeeded` by the second person's. Stop with Ctrl-C and `docker stop ssc-rig-pg`.
 
 ## Record
 
