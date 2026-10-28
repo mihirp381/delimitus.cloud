@@ -2,18 +2,30 @@
 
 import argparse
 import base64
+import hashlib
+import html
 import json
+import os
+import re
+import secrets
 import stat
+import subprocess
+import sys
 import uuid
+from urllib.parse import parse_qs, urlsplit
 
 import httpx2
 import psycopg
+from fake_workos import FakeWorkOS
 
 from ssc_bundle.client import prepare
 from ssc_cli.credentials import SERVICE
 from ssc_cli.session import Session
 from ssc_control.api import Settings
 from ssc_control.api.routes.blobs import blob_store_for, check_fs_allowed
+from ssc_control.api.settings import USER_AUDIENCE
+from ssc_control.db import make_engine
+from ssc_control.identity import oauth
 from ssc_shared.blobstore_fs import FsBlobStore
 
 BASE = {"SSC_DATABASE_DSN": "postgresql://ssc_app@localhost/ssc", "SSC_API_JWKS": '{"keys": []}'}
@@ -131,6 +143,169 @@ def test_the_auth_host_signs_with_the_key_the_dev_api_trusts(dev_stack, tmp_path
     trusted = json.loads((tmp_path / "jwks.json").read_text())
     signer = stack.Signer(first.signing_pem, stack.KID, stack.ISSUER)
     assert signer.jwks()["keys"][0]["x"] == trusted["keys"][0]["x"]
+
+
+def test_the_rig_console_client_is_the_local_console(dev_stack, tmp_path):
+    stack = dev_stack
+    stack._write_private(
+        stack._state_path(tmp_path), json.dumps({"database_dsn": BASE["SSC_DATABASE_DSN"]}).encode()
+    )
+    env = {"SSC_WORKOS_API_KEY": "sk_test_x", "SSC_WORKOS_CLIENT_ID": "client_x"}
+    s = stack.auth_settings(tmp_path, "http://localhost:8100", env)
+    assert s.console_url == "http://localhost:5173"
+    assert oauth.console_client(s.console_url).redirect_uris == (
+        "http://localhost:5173/auth/callback",
+    )
+    assert s.api_audience == Settings.from_env(stack.api_env(tmp_path, dict(BASE))).user_audience
+    given = {**env, "SSC_CONSOLE_URL": "http://localhost:4173"}
+    assert stack.auth_settings(tmp_path, "http://x:1", given).console_url == "http://localhost:4173"
+    chosen = stack.auth_settings(tmp_path, "http://x:1", given, "http://127.0.0.1:5174/")
+    assert chosen.console_url == "http://127.0.0.1:5174"
+
+
+CONSOLE = "http://localhost:5173"
+RIG_AUTH = "http://localhost:8100"
+REFRESH = re.compile(r"<meta http-equiv=refresh content='0;url=([^']+)'>")
+PENDING = re.compile(r"name=pending value='([^']*)'")
+
+
+def _query(location: str) -> dict[str, str]:
+    return {k: v[0] for k, v in parse_qs(urlsplit(location).query).items()}
+
+
+def _create_social_org(live, admin: str) -> str:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("SSC_")}
+    env["SSC_DATABASE_DSN"] = live.stack.load_state(live.dir)["database_dsn"]
+    label = f"l{secrets.token_hex(6)}"
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ssc_control.identity",
+            "create-social-org",
+            "--name",
+            "Rig social",
+            "--admin-email",
+            admin,
+            "--confirm-admin-email",
+            admin,
+            "--providers",
+            "google",
+            "--cell-label",
+            label,
+            "--operator",
+            "op_dev",
+        ],
+        input="confirm\n",
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+        timeout=120,
+    )
+    assert done.returncode == 0, done.stderr
+    return done.stdout.strip()
+
+
+async def _console_sign_in(
+    auth: httpx2.AsyncClient, wo: FakeWorkOS, org: str, subject: str, email: str
+) -> str:
+    auth.cookies.clear()
+    verifier = secrets.token_urlsafe(48)
+    challenge = hashlib.sha256(verifier.encode()).digest()
+    redirect = f"{CONSOLE}/auth/callback"
+    page = await auth.get(
+        "/authorize",
+        params={
+            "response_type": "code",
+            "client_id": oauth.CONSOLE_CLIENT_ID,
+            "redirect_uri": redirect,
+            "state": "st",
+            "code_challenge": base64.urlsafe_b64encode(challenge).rstrip(b"=").decode(),
+            "code_challenge_method": "S256",
+            "resource": USER_AUDIENCE,
+            "org": org,
+        },
+    )
+    assert page.status_code == 200 and "value='google'" in page.text, page.text
+    pending = PENDING.search(page.text)
+    assert pending is not None
+    chosen = await auth.post(
+        "/login/social", data={"pending": html.unescape(pending[1]), "provider": "google"}
+    )
+    found = REFRESH.search(chosen.text)
+    assert found is not None, chosen.text
+    code = secrets.token_hex(8)
+    wo.profile(code, subject, email, connection_type="GoogleOAuth")
+    back = await auth.get(
+        "/callback", params={"code": code, "state": _query(html.unescape(found[1]))["state"]}
+    )
+    assert back.status_code == 302, back.text
+    answer = _query(back.headers["location"])
+    assert back.headers["location"].startswith(f"{redirect}?")
+    assert answer["iss"] == RIG_AUTH and answer["state"] == "st"
+    form = {
+        "grant_type": "authorization_code",
+        "client_id": oauth.CONSOLE_CLIENT_ID,
+        "code": answer["code"],
+        "redirect_uri": redirect,
+        "code_verifier": verifier,
+        "resource": USER_AUDIENCE,
+    }
+    token = await auth.post("/token", data=form, headers={"origin": CONSOLE})
+    assert token.status_code == 200, token.text
+    assert token.headers["access-control-allow-origin"] == CONSOLE
+    return str(token.json()["access_token"])
+
+
+async def test_live_the_local_console_signs_in_through_the_rig(live):
+    admin, bob = "admin@rig.example", "bob@rig.example"
+    org = _create_social_org(live, admin)
+    env = {"SSC_WORKOS_API_KEY": "sk_test_fake", "SSC_WORKOS_CLIENT_ID": "client_fake"}
+    s = live.stack.auth_settings(live.dir, RIG_AUTH, env)
+    wo = FakeWorkOS()
+    workos = wo.client()
+    engine = make_engine(s.database_dsn)
+    transport = httpx2.ASGITransport(app=live.stack.auth_app(s, workos, engine))
+    try:
+        async with httpx2.AsyncClient(transport=transport, base_url=RIG_AUTH) as auth:
+            preflight = await auth.options(
+                "/token", headers={"origin": CONSOLE, "access-control-request-method": "POST"}
+            )
+            assert preflight.status_code == 204
+            access = await _console_sign_in(auth, wo, org, "110000000000000000001", admin)
+            with httpx2.Client(
+                base_url=live.url, headers={"authorization": f"Bearer {access}"}
+            ) as api:
+                me = api.get("/v1/whoami")
+                assert me.status_code == 200, me.text
+                assert (me.json()["org_id"], me.json()["role"]) == (org, "admin")
+                assert me.json()["sign_in_mode"] == "social"
+                invited = api.post(
+                    "/v1/users/invite",
+                    json={"email": bob},
+                    headers={"idempotency-key": str(uuid.uuid4())},
+                )
+                assert invited.status_code == 201, invited.text
+            access = await _console_sign_in(auth, wo, org, "110000000000000000002", bob)
+            me = httpx2.get(f"{live.url}/v1/whoami", headers={"authorization": f"Bearer {access}"})
+            assert me.status_code == 200, me.text
+            assert (me.json()["subject"], me.json()["email"]) == (invited.json()["id"], bob)
+    finally:
+        await workos.aclose()
+        await engine.dispose()
+    with psycopg.connect(live.stack.load_state(live.dir)["database_dsn"]) as conn:
+        conn.execute("select set_config('ssc.org', %s, true)", (org,))
+        people = conn.execute(
+            "select email, role, status from ssc.user_account order by email"
+        ).fetchall()
+        actions = [
+            a
+            for (a,) in conn.execute("select action from ssc.audit_event order by seq").fetchall()
+            if a in {"user.invited", "login.succeeded"}
+        ]
+    assert people == [(admin, "admin", "active"), (bob, "member", "active")]
+    assert actions == ["user.invited", "login.succeeded", "user.invited", "login.succeeded"]
 
 
 def test_live_sso_org_keys_the_founder_under_the_directory(live):
