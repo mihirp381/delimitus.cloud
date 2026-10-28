@@ -45,14 +45,15 @@ test('loads only from its own origin, sets no cookie and breaks no policy', asyn
   expect(await page.context().cookies()).toEqual([]);
 });
 
-test('signs in at the console from the nav and the hero', async ({ page }) => {
+test('signs in at the console from the nav, the one link there', async ({ page }) => {
   await page.goto('/');
   const signIn = page.locator('a[href="https://console.delimitus.com/login"]');
-  await expect(signIn).toHaveCount(2);
+  await expect(signIn).toHaveCount(1);
+  await expect(page.locator('.nav__act a[href="https://console.delimitus.com/login"]')).toHaveCount(1);
   const navSignIn = page.locator('.nav__act .btn--ghost');
   await expect(navSignIn).toHaveText('Sign in');
   await expect(navSignIn).toBeVisible();
-  await expect(page.locator('.hero__cta .btn', { hasText: 'Sign in' })).toBeVisible();
+  await expect(page.locator('.hero__cta a', { hasText: 'Sign in' })).toHaveCount(0);
   // WebKit leaves links out of the Tab order by default, so focus it directly.
   await navSignIn.focus();
   await expect(navSignIn).toBeFocused();
@@ -179,6 +180,18 @@ test('the long way races once it is in view', async ({ page }) => {
   await expect(wait).not.toHaveClass(/is-done/);
 });
 
+test('the hero steps ease in one after another', async ({ page }, info) => {
+  test.skip(!info.project.name.startsWith('chromium'));
+  await page.goto('/');
+  const strip = page.locator('#heroSteps');
+  const third = strip.locator('li').nth(2);
+  await expect(strip).toHaveClass(/is-armed/);
+  await strip.scrollIntoViewIfNeeded();
+  await expect(third).toHaveClass(/is-on/, { timeout: 6000 });
+  await expect(third).toHaveCSS('opacity', '1');
+  await expect(third).toHaveCSS('transform', 'none');
+});
+
 test('the hero zooms into the app where there is room, and holds still where there is not', async ({ page }) => {
   await page.goto('/');
   const room = await page.evaluate(() => matchMedia('(min-width: 1100px) and (min-height: 640px)').matches);
@@ -222,6 +235,16 @@ test.describe('reduced motion', () => {
     }
     expect(await race.locator('.race__lane--dlm li').last().getAttribute('class')).toContain('is-wait');
     expect(await race.locator('[data-race="hours"]').textContent()).toBe('92');
+  });
+  test('shows the three hero steps at once', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#heroSteps')).not.toHaveClass(/is-armed/);
+    const steps = page.locator('#heroSteps li');
+    await expect(steps).toHaveCount(3);
+    for (const step of await steps.all()) {
+      expect(await step.getAttribute('class')).toContain('is-on');
+      expect(await step.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
+    }
   });
   test('keeps the hero still', async ({ page }) => {
     await page.goto('/');

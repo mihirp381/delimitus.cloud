@@ -58,6 +58,11 @@ redirected to the apex by the service.
   motion is allowed and scripts run (`scripting: enabled`); everywhere else the hero is a static
   block. Its flows' moving dots are SMIL, which ignores the reduced-motion CSS, so that CSS
   hides them.
+  The three steps under the hero rise in one after another once the strip is in view, each line
+  between them growing after the step before it, once per page load. They wait for the agent
+  panel's ticks to finish and for the zoom to be at rest (`body.is-entering` cleared), so a strip
+  in view at load plays after the hero. Under reduced motion, or with no IntersectionObserver,
+  and with JavaScript off, the markup shows all three.
   How it works plays itself once it is in view: each step's bar fills, step 1 types the prompt,
   the chat lines land one by one and the pipeline lights, once per page load. Under reduced
   motion, or with no IntersectionObserver, it shows step 3 finished; with
@@ -70,6 +75,7 @@ redirected to the apex by the service.
 
 ## Sign in
 
-The nav and the hero link to the console's sign-in, `https://console.delimitus.com/login`; a link is
-a navigation, not a load, so the content security policy needs no change. `page.py`'s check allows
-that exact `href` (`SIGN_IN`) and still refuses every other `href`, `src` or `action` to another origin.
+The nav's Sign in button is the page's one link to the console's sign-in,
+`https://console.delimitus.com/login`; a link is a navigation, not a load, so the content security
+policy needs no change. `page.py`'s check allows that exact `href` (`SIGN_IN`) and still refuses
+every other `href`, `src` or `action` to another origin.
