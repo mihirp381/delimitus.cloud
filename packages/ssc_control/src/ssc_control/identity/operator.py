@@ -7,9 +7,9 @@ any step rolls back all of it: no org, no ``org_index`` row, no audit event. Eve
 ``org.created``, ``directory.connected``, and ``org.updated`` when a cell label is given.
 
 ``create-social-org`` makes a pilot org in social mode (decision 002 amendment 2026-10-27) with no
-WorkOS organisation or directory, in one transaction: ``org.created``, ``user.invited`` (the
-first admin, linked at their first sign-in), ``org.updated`` (the mode) and ``org.updated`` (the
-cell label).
+WorkOS organisation or directory, in one transaction: ``org.created``, ``org.updated`` (the
+mode), ``user.invited`` (the first admin, linked at their first sign-in) and ``org.updated`` (the
+cell label). It is the only way into social mode: a directory org never moves to it.
 
 ``restore-admin`` is for an org the directory left with no active admin (decision 024 allows
 that: sync deactivates a founder it cannot find, and an operator restores an admin). In one
@@ -229,6 +229,7 @@ async def create_social_org(  # noqa: PLR0913  (keyword-only)
     try:
         async with bound_org(engine, org_id) as conn:
             generated = await open_org_in(conn, org_id, name, actor=actor)
+            await social.set_sign_in(conn, org_id, "social", providers, actor=actor)
             await conn.execute(_INVITE_ADMIN, {"id": admin_id, "org": org_id, "email": email})
             await append_event(
                 conn,
@@ -241,7 +242,6 @@ async def create_social_org(  # noqa: PLR0913  (keyword-only)
                     after={"role": "admin", "status": "invited"},
                 ),
             )
-            await social.set_sign_in(conn, org_id, "social", providers, actor=actor)
             await _set_cell_label(conn, org_id, generated, label, actor)
     except DBAPIError as e:
         if getattr(e.orig, "sqlstate", None) != UNIQUE_VIOLATION:

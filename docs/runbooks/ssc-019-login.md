@@ -247,8 +247,8 @@ echo $ORG
 ```
 
 Pass: the org id on stdout. One transaction makes the org in social mode, its first admin as an
-invited person and its cell label, audited `org.created`, `user.invited`, `org.updated` (the
-mode) and `org.updated` (the label). A bad provider, label or address, or a label another org
+invited person and its cell label, audited `org.created`, `org.updated` (the mode),
+`user.invited` and `org.updated` (the label). A bad provider, label or address, or a label another org
 has, writes nothing and says why. Leave `github` out of `--providers`, as above. The org has no
 onboarding row and directory sync skips it.
 
@@ -269,17 +269,18 @@ org's providers: the sign-in links them, makes them active and takes their name 
 Until then People shows them as Invited, and `restore-admin` refuses them: in a social org it
 restores only a person who has signed in once.
 
-### Switch an existing org **[real]**
+### Change a social org's providers **[real]**
 
-Put an org that exists already in social mode with the providers it may use:
+`create-social-org` is the only way into social mode: a directory org is never moved to it, and
+`set-sign-in --mode social` on one refuses and writes nothing. For an org already in social mode:
 
 ```sh
 uv run python -m ssc_control.identity set-sign-in --org <org_…> --mode social \
   --providers google,microsoft --operator op_<you>
 ```
 
-Pass: `<org_…> social` on stdout. `--mode directory` with no `--providers` reverts it; directory
-sync skips an org while it is in social mode.
+Pass: `<org_…> social` on stdout. `--mode directory` with no `--providers` takes the org out of
+social mode, for good.
 
 ### Invite people **[real]**
 

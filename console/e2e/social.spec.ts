@@ -16,9 +16,21 @@ function inApi(...command: string[]): string {
   return execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }).trim();
 }
 
-function setSignIn(org: string, mode: 'social' | 'directory'): void {
-  const providers = mode === 'social' ? ' --providers google,github' : '';
-  const cli = `python -m ssc_control.identity set-sign-in --org ${org} --mode ${mode}${providers} --operator op_e2e`;
+// set-sign-in refuses a directory org social mode, so the test writes the mode itself.
+const FORCE_SOCIAL = [
+  'import json, sys, psycopg',
+  'from ssc_control.db import bind_org_sync',
+  'with psycopg.connect(json.load(open("/state/state.json"))["database_dsn"]) as c:',
+  '    bind_org_sync(c, sys.argv[1])',
+  "    c.execute(\"update ssc.org set sign_in_mode = 'social', social_providers = '{google,github}' where id = %s\", (sys.argv[1],))",
+].join('\n');
+
+function toSocial(org: string): void {
+  inApi('python', '-c', FORCE_SOCIAL, org);
+}
+
+function toDirectory(org: string): void {
+  const cli = `python -m ssc_control.identity set-sign-in --org ${org} --mode directory --operator op_e2e`;
   inApi('sh', '-c', `SSC_DATABASE_DSN=${APP_DSN} ${cli}`);
 }
 
@@ -27,11 +39,11 @@ let org = '';
 test.beforeAll(async ({ request }) => {
   expect(token && operatorToken && composeProject, 'run through e2e/run.mjs').toBeTruthy();
   org = (await (await request.get(`${apiUrl}/v1/whoami`, { headers: bearer(token) })).json()).org_id;
-  setSignIn(org, 'social');
+  toSocial(org);
 });
 
 test.afterAll(() => {
-  if (org) setSignIn(org, 'directory');
+  if (org) toDirectory(org);
 });
 
 test('a social org invites by email and deactivates from the People page', async ({ page, request }) => {

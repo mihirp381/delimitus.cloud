@@ -1,7 +1,7 @@
-"""Pilot social sign-in (decision 002 amendment 2026-10-27). An operator puts a pilot org in
+"""Pilot social sign-in (decision 002 amendment 2026-10-27). An operator creates a pilot org in
 social mode with the providers it may use; its admins invite people by email. A first sign-in
 links the provider's subject to the one invited or active person with the verified address;
-later sign-ins match the subject only."""
+later sign-ins match the subject only. A directory org never moves to social mode."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -72,6 +72,10 @@ def check_providers(raw: str) -> tuple[str, ...]:
 
 _MODE = text("select sign_in_mode, social_providers from ssc.org where id = :org")
 _LOCK_MODE = text("select sign_in_mode, social_providers from ssc.org where id = :org for update")
+_EMPTY = text(
+    "select not exists (select 1 from ssc.user_account where org_id = :org) "
+    "and not exists (select 1 from ssc.directory_connection where org_id = :org)"
+)
 _SET_MODE = text(
     "update ssc.org set sign_in_mode = :mode, social_providers = cast(:providers as text[]) "
     "where id = :org"
@@ -209,12 +213,18 @@ async def set_sign_in(
     *,
     actor: Actor,
 ) -> bool:
-    """Set the org's sign-in mode, audited; False when it was already so."""
+    """Set the org's sign-in mode, audited; False when it was already so. Only an org with no
+    people and no connection yet, as ``create-social-org`` opens one, may leave directory mode."""
     if (sign_in_mode == "social") != bool(providers):
         raise SignInError("social mode needs providers; directory mode takes none")
     row = (await conn.execute(_LOCK_MODE, {"org": org_id})).one_or_none()
     if row is None:
         raise SignInError(f"{org_id} is not an org")
+    if row[0] == "directory" and sign_in_mode == "social" and not await _empty(conn, org_id):
+        raise SignInError(
+            f"{org_id} is a directory org and cannot move to social mode; a social pilot is a "
+            "new org, made with create-social-org"
+        )
     before = {"sign_in_mode": str(row[0]), "social_providers": list(row[1])}
     after = {"sign_in_mode": sign_in_mode, "social_providers": list(providers)}
     if before == after:
@@ -235,3 +245,7 @@ async def set_sign_in(
         ),
     )
     return True
+
+
+async def _empty(conn: AsyncConnection, org_id: str) -> bool:
+    return bool((await conn.execute(_EMPTY, {"org": org_id})).scalar_one())

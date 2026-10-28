@@ -23,7 +23,8 @@
   ``invite list --org ID``, ``invite revoke ID --operator op_x``: pilot invite codes
   (``identity.invites``). ``create`` prints the code once; only its SHA-256 is kept.
 * ``set-sign-in --org ID --mode social --providers google,microsoft,github --operator op_x``, or
-  ``--mode directory``: a pilot org's sign-in mode, audited (``identity.social``).
+  ``--mode directory``: a social org's providers, or back to directory mode, audited
+  (``identity.social``). A directory org is refused social mode.
 
 Every command connects with ``SSC_DATABASE_DSN``; ``sync``, ``connect`` and ``create-org`` read
 ``SSC_WORKOS_API_KEY``, ``SSC_WORKOS_CLIENT_ID`` and optionally ``SSC_WORKOS_BASE``; the others

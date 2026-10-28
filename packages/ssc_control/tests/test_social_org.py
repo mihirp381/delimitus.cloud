@@ -128,10 +128,10 @@ def test_create_social_org_makes_the_org_its_invited_admin_and_four_events(
     ((admin, *person),) = people
     assert tuple(person) == ("admin", "invited", "ada@example.com", "ada@example.com")
     assert state == (name, "social", ["google", "microsoft"], label, 0, 0, 1)
-    assert [e[0] for e in events] == ["org.created", "user.invited", "org.updated", "org.updated"]
+    assert [e[0] for e in events] == ["org.created", "org.updated", "user.invited", "org.updated"]
     assert {(e[1], e[2]) for e in events} == {("operator", "op_dana")}
-    assert events[1][3:] == ("user_account", admin, None, {"role": "admin", "status": "invited"})
-    assert events[2][6] == {"sign_in_mode": "social", "social_providers": ["google", "microsoft"]}
+    assert events[1][6] == {"sign_in_mode": "social", "social_providers": ["google", "microsoft"]}
+    assert events[2][3:] == ("user_account", admin, None, {"role": "admin", "status": "invited"})
     assert events[3][6] == {"cell_label": label}
 
     async def verified(engine: AsyncEngine) -> int:
@@ -222,7 +222,7 @@ async def test_the_invited_admin_signs_in_invites_a_member_who_signs_in_too(dsns
             )
             assert_problem(c.get("/v1/users", headers=as_bob), ErrorCode.FORBIDDEN)
         actions = [r[1] for r in await events_of(w.engine, w.org)]
-        assert actions[:4] == ["org.created", "user.invited", "org.updated", "org.updated"]
+        assert actions[:4] == ["org.created", "org.updated", "user.invited", "org.updated"]
         assert actions.count("user.invited") == 2
         assert actions.count("identity.linked") == 2
         await chain_ok(w.engine, w.org)
