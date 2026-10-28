@@ -116,8 +116,8 @@ export interface paths {
         /**
          * Retire Domain
          * @description Retire the org's customer domain once its parent no longer delegates it, or after 12
-         *     months. ``DOMAIN_STATE`` names why not, and refuses the org's current suffix. Audited as
-         *     ``domain.retired``.
+         *     months. The public resolvers are asked again first. ``DOMAIN_STATE`` names why not, and
+         *     refuses the org's current suffix. Audited as ``domain.retired``.
          */
         post: operations["retire_domain_internal_v1_orgs__org_id__domain_retire_post"];
         delete?: never;

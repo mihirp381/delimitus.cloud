@@ -73,11 +73,10 @@ feature is built and tested locally and has not yet been run against a live doma
 
 - If your NS records still point at our zone after you stop using it, and the zone were deleted,
   anyone able to create a zone of the same name on the same name servers could serve your
-  subdomain. So we keep the zone: a retire is refused while the last check of the public
-  resolvers saw them name our servers, or while no check has answered, for 12 months after the
-  delegation was last seen. That check runs while we wait for your NS change; after the domain
-  goes active it is not repeated, so in practice the zone is kept for the full 12 months.
-  [ssc_control domains/lifecycle.py, `retire_allowed`]
+  subdomain. So we keep the zone: a retire asks the public resolvers again at that moment and
+  is refused while any of them names our servers, or when one of them does not answer, for 12
+  months after the delegation was last seen. Once your NS records are gone, the zone can be
+  emptied straight away. [ssc_control domains/lifecycle.py, `recheck` and `retire_allowed`]
 - Retiring empties the zone (the certificate, its map entry, its authorization and every record
   but NS and SOA are deleted) and keeps the zone itself; an operator deletes it by hand after the
   12 months. Remove the NS records at your parent when you leave: once the zone is deleted, a

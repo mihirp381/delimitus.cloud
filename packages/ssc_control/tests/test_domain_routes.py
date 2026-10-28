@@ -398,7 +398,6 @@ async def test_an_operator_retires_a_domain_its_parent_no_longer_delegates(
     assert_problem(retire(b, rival, op), ErrorCode.FORBIDDEN)
 
     d = put(b, name(b), b.t.admin).json()["delegation"]
-    assert_problem(retire(b, b.w.org, op), ErrorCode.DOMAIN_STATE)
     execute(b.dsn, b.w.org, "update ssc.org set apps_suffix = %s", name(b))
     execute(
         b.dsn,
@@ -415,3 +414,33 @@ async def test_an_operator_retires_a_domain_its_parent_no_longer_delegates(
     last = domain_audit(b)[-1]
     assert (last["action"], last["actor_id"]) == ("domain.retired", "op_dana")
     assert get(b, "/v1/domain", b.t.admin).json()["delegation"] is None
+
+
+async def test_retire_asks_the_resolvers_again_and_refuses_while_the_parent_delegates(
+    b: Bench, signing_key: SigningKey, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake = cell(b)
+    op = operator(signing_key, b.w.org)
+    d = put(b, name(b), b.t.admin).json()["delegation"]
+    ours = frozenset(d["name_servers"])
+    gone = '{"cloudflare": [], "google": [], "quad9": []}'
+    execute(b.dsn, b.w.org, "update ssc.org_domain set observed_ns = %s::jsonb", gone)
+    app = app_of(b)
+    app.state.runtime = replace(app.state.runtime, resolvers=resolvers({name(b): ours}))
+    r = retire(b, b.w.org, op)
+    assert_problem(r, ErrorCode.DOMAIN_STATE)
+    assert "still delegates" in caplog.text
+
+    app.state.runtime = replace(app.state.runtime, resolvers={n: Broken() for n in DOH_ENDPOINTS})
+    r = retire(b, b.w.org, op)
+    assert_problem(r, ErrorCode.DOMAIN_STATE)
+    assert "did not all answer" in caplog.text
+    assert ("retire", name(b)) not in fake.calls
+
+    app.state.runtime = replace(app.state.runtime, resolvers=resolvers({}))
+    execute(b.dsn, b.w.org, "update ssc.org_domain set observed_ns = null")
+    r = retire(b, b.w.org, op)
+    assert r.status_code == 200, r.text
+    assert fake.calls[-1] == ("retire", name(b))
+    seen = rows_of(b.dsn, b.w.org, "select observed_ns from ssc.org_domain")[0]["observed_ns"]
+    assert seen == {n: [] for n in DOH_ENDPOINTS}

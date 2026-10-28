@@ -13,9 +13,10 @@ from ssc_control.api.problems import Refusal
 from ssc_control.api.routes.common import POST_COMMON, problem_responses
 from ssc_control.api.routes.v1.common import Id
 from ssc_control.api.routes.v1.domains import DelegationOut, agent_of, delegation_out
+from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import InternalUoW, actor_of
 from ssc_control.db.domains import domain_of
-from ssc_control.domains.lifecycle import RetireRefusedError, retire
+from ssc_control.domains.lifecycle import RetireRefusedError, recheck, retire
 from ssc_control.runtime.cell_domains import CellDomainsError
 
 router = APIRouter(prefix="/orgs")
@@ -37,8 +38,8 @@ _APPS_SUFFIX = text("select apps_suffix from ssc.org where id = :org")
 )
 async def retire_domain(request: Request, org_id: Id, uow: InternalUoW) -> Response:
     """Retire the org's customer domain once its parent no longer delegates it, or after 12
-    months. ``DOMAIN_STATE`` names why not, and refuses the org's current suffix. Audited as
-    ``domain.retired``."""
+    months. The public resolvers are asked again first. ``DOMAIN_STATE`` names why not, and
+    refuses the org's current suffix. Audited as ``domain.retired``."""
     if uow.principal.kind is not PrincipalKind.OPERATOR:
         raise Refusal(
             ErrorCode.FORBIDDEN,
@@ -55,8 +56,10 @@ async def retire_domain(request: Request, org_id: Id, uow: InternalUoW) -> Respo
             ErrorCode.DOMAIN_STATE, evidence={"reason": "the organization uses the domain"}
         )
     agent = await agent_of(request, org_id)
+    now = datetime.now(UTC)
     try:
-        retired = await retire(uow.conn, agent, row, actor_of(uow.principal), datetime.now(UTC))
+        row = await recheck(uow.conn, runtime_of(request).resolvers, row, now)
+        retired = await retire(uow.conn, agent, row, actor_of(uow.principal), now)
     except RetireRefusedError as exc:
         raise Refusal(ErrorCode.DOMAIN_STATE, evidence={"reason": str(exc)}) from None
     except CellDomainsError as exc:
