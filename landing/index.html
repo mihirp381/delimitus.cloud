@@ -355,11 +355,15 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .enter__n { flex: none; width: 2.75rem; height: 2.75rem; border-radius: 50%; display: grid; place-items: center; background: var(--violet-soft); color: var(--t-violet); font-weight: 600; font-size: 1.05rem; }
 .enter__steps p { margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 0.95rem; line-height: 1.45; color: var(--ink-2); }
 .enter__steps b { font-size: 1.05rem; font-weight: 600; color: var(--ink); }
-/* armed by script: each step rises in, then the line after it grows */
-.enter__steps.is-armed li { transition: opacity 420ms ease-out, transform 420ms ease-out; }
-.enter__steps.is-armed li:not(.is-on) { opacity: 0; transform: translateY(8px); }
-.enter__steps.is-armed li::after { transform-origin: left center; transition: transform 420ms ease-out 420ms; }
-.enter__steps.is-armed li:not(.is-on)::after { transform: scaleX(0); }
+/* on load, after the agent panel's ticks: each step rises in, then the line after it grows */
+@media (prefers-reduced-motion: no-preference) {
+  .enter__steps li { animation: steprise 480ms ease-out backwards; }
+  .enter__steps li:nth-child(1) { animation-delay: 1.75s; }
+  .enter__steps li:nth-child(2) { animation-delay: 1.93s; }
+  .enter__steps li:nth-child(3) { animation-delay: 2.11s; }
+}
+@keyframes steprise { from { opacity: 0; transform: translateY(8px); } }
+@keyframes stepline { from { transform: scaleX(0); } }
 
 .enter__glow {
   position: absolute; left: 50%; top: var(--gy, 50%); z-index: 1; width: var(--gw, 0); height: 40px; margin-top: -20px;
@@ -385,6 +389,11 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
     content: ""; flex: 1 1 auto; min-width: 20px; height: 1.5px; margin: 1.35rem 22px 0;
     background: linear-gradient(90deg, rgba(110, 91, 255, 0.12), rgba(194, 75, 240, 0.5), rgba(255, 94, 58, 0.35));
   }
+}
+@media (min-width: 900px) and (prefers-reduced-motion: no-preference) {
+  .enter__steps li:not(:last-child)::after { transform-origin: left center; animation: stepline 520ms ease-out backwards; }
+  .enter__steps li:nth-child(1)::after { animation-delay: 2.05s; }
+  .enter__steps li:nth-child(2)::after { animation-delay: 2.23s; }
 }
 @media (min-width: 1100px) {
   .enter__grid { grid-template-columns: minmax(0, 36fr) minmax(0, 58fr); gap: clamp(24px, 2.6vw, 44px); }
@@ -1083,9 +1092,9 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       </div>
     </div>
     <ol class="enter__in enter__steps" id="heroSteps">
-      <li class="is-on" data-claim="agent"><span class="enter__n">1</span><p><b>Tell your agent what to build</b><span>“Build this and deploy it on Delimitus.”</span></p></li>
-      <li class="is-on" data-claim="deploy login"><span class="enter__n">2</span><p><b>Your agent builds and deploys</b><span>Delimitus handles infrastructure, security and company access.</span></p></li>
-      <li class="is-on" data-claim="share minutes"><span class="enter__n">3</span><p><b>Get a secure, shareable app</b><span>Preview in minutes.</span></p></li>
+      <li data-claim="agent"><span class="enter__n">1</span><p><b>Tell your agent what to build</b><span>“Build this and deploy it on Delimitus.”</span></p></li>
+      <li data-claim="deploy login"><span class="enter__n">2</span><p><b>Your agent builds and deploys</b><span>Delimitus handles infrastructure, security and company access.</span></p></li>
+      <li data-claim="share minutes"><span class="enter__n">3</span><p><b>Get a secure, shareable app</b><span>Preview in minutes.</span></p></li>
     </ol>
     <div class="enter__into" id="into">
       <p class="label">One prompt</p>
@@ -1868,36 +1877,6 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       }, { threshold: 0.5 });
       seen.observe(document.getElementById("term"));
     }
-  }
-
-  /* ── the hero's steps: in turn, once the hero's own ticks are done ───── */
-  var strip = document.getElementById("heroSteps");
-  if (strip && !calm && watching) {
-    var parts = strip.querySelectorAll("li");
-    var still = function () { return !document.body.classList.contains("is-entering"); };
-    var show = function () {
-      each(parts, function (l, i) { window.setTimeout(function () { l.classList.add("is-on"); }, i * 180); });
-    };
-    var settled = function () {
-      var ticks = document.querySelectorAll(".agentp__steps svg");
-      var tick = ticks[ticks.length - 1];
-      var runs = tick && tick.getAnimations ? tick.getAnimations() : [];
-      return Promise.all(runs.map(function (a) { return a.finished; })).catch(function () {});
-    };
-    each(parts, function (l) { l.classList.remove("is-on"); });
-    strip.classList.add("is-armed");
-    var shown = new IntersectionObserver(function (entries) {
-      if (!entries[0].isIntersecting) { return; }
-      shown.disconnect();
-      settled().then(function () {
-        if (still()) { show(); return; }
-        var held = new MutationObserver(function () {
-          if (still()) { held.disconnect(); show(); }
-        });
-        held.observe(document.body, { attributes: true, attributeFilter: ["class"] });
-      });
-    }, { threshold: 0.5 });
-    shown.observe(strip);
   }
 
   /* ── the gap: the list bursts out of the prompt ──────────────────────── */
