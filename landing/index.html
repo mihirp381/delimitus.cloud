@@ -355,15 +355,18 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .enter__n { flex: none; width: 2.75rem; height: 2.75rem; border-radius: 50%; display: grid; place-items: center; background: var(--violet-soft); color: var(--t-violet); font-weight: 600; font-size: 1.05rem; }
 .enter__steps p { margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 0.95rem; line-height: 1.45; color: var(--ink-2); }
 .enter__steps b { font-size: 1.05rem; font-weight: 600; color: var(--ink); }
-/* on load, after the agent panel's ticks: each step rises in, then the line after it grows */
+/* on load, after the agent panel's ticks: the circles light 1 to 3, the line between them filling */
 @media (prefers-reduced-motion: no-preference) {
-  .enter__steps li { animation: steprise 480ms ease-out backwards; }
-  .enter__steps li:nth-child(1) { animation-delay: 1.75s; }
-  .enter__steps li:nth-child(2) { animation-delay: 1.93s; }
-  .enter__steps li:nth-child(3) { animation-delay: 2.11s; }
+  .enter__n { animation: stepon 450ms ease-out 1.75s backwards; }
+  .enter__steps li:nth-child(2) .enter__n { animation-delay: 2.25s; }
+  .enter__steps li:nth-child(3) .enter__n { animation-delay: 2.75s; }
 }
-@keyframes steprise { from { opacity: 0; transform: translateY(8px); } }
-@keyframes stepline { from { transform: scaleX(0); } }
+@keyframes stepon {
+  from { background-color: var(--ground-alt); color: var(--ink-3); box-shadow: 0 0 0 0 rgba(110, 91, 255, 0.45); }
+  35% { background-color: var(--violet-soft); color: var(--t-violet); transform: scale(1.12); }
+  to { box-shadow: 0 0 0 12px rgba(110, 91, 255, 0); }
+}
+@keyframes stepfill { from { background-size: 0% 100%, 100% 100%; } }
 
 .enter__glow {
   position: absolute; left: 50%; top: var(--gy, 50%); z-index: 1; width: var(--gw, 0); height: 40px; margin-top: -20px;
@@ -387,13 +390,16 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
   .enter__steps p { flex: 0 1 auto; max-width: 19rem; }
   .enter__steps li:not(:last-child)::after {
     content: ""; flex: 1 1 auto; min-width: 20px; height: 1.5px; margin: 1.35rem 22px 0;
-    background: linear-gradient(90deg, rgba(110, 91, 255, 0.12), rgba(194, 75, 240, 0.5), rgba(255, 94, 58, 0.35));
+    background:
+      linear-gradient(90deg, rgba(110, 91, 255, 0.12), rgba(194, 75, 240, 0.5), rgba(255, 94, 58, 0.35)) left / 100% 100% no-repeat,
+      linear-gradient(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.08)) right / 0% 100% no-repeat;
   }
 }
 @media (min-width: 900px) and (prefers-reduced-motion: no-preference) {
-  .enter__steps li:not(:last-child)::after { transform-origin: left center; animation: stepline 520ms ease-out backwards; }
-  .enter__steps li:nth-child(1)::after { animation-delay: 2.05s; }
-  .enter__steps li:nth-child(2)::after { animation-delay: 2.23s; }
+  .enter__steps li:not(:last-child)::after { animation: stepfill 650ms ease-in-out 2.1s backwards; }
+  .enter__steps li:nth-child(2)::after { animation-delay: 3.05s; }
+  .enter__steps li:nth-child(2) .enter__n { animation-delay: 2.7s; }
+  .enter__steps li:nth-child(3) .enter__n { animation-delay: 3.65s; }
 }
 @media (min-width: 1100px) {
   .enter__grid { grid-template-columns: minmax(0, 36fr) minmax(0, 58fr); gap: clamp(24px, 2.6vw, 44px); }
