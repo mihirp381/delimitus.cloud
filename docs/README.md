@@ -46,6 +46,7 @@ checks, use [CONTRIBUTING.md](../CONTRIBUTING.md); for code navigation, use the
 | [Support and on call](runbooks/ssc-062-support-and-on-call.md) | Alerts, diagnosis, escalation, and status notes. |
 | [Cost reconciliation](runbooks/ssc-096-cost-reconciliation.md) | Compare usage records with cloud billing. |
 | [Kill switch drill](kill-switch-drill.md) | Measure app shutdown and revocation. |
+| [Public Suffix List refresh](../tools/psl_refresh.py) | `uv run python tools/psl_refresh.py` rewrites the vendored list (ICANN section) that suffix admission reads; `test_psl.py` fails once it is 90 days old. Vendored 2026-10-22: refresh before 2027-01-20. |
 | [Customer domain zone](plans/custom-domains-2026-10-26.md) | Never delete a zone by hand while the probe sees the delegation; after the cap, `gcloud dns managed-zones delete` in the cell project; a retired cell's project must outlive its delegated zones (dangling-delegation takeover). |
 
 ## Known limits
@@ -60,6 +61,9 @@ feature or making a product claim.
 - [Builds](trust/build-limits.md): build network access and secret scanning limits.
 - [AI agents](trust/agent-limits.md): what an agent credential can and cannot do, what the
   adversarial matrix and the live sweep check, and the gaps they found.
+- [Your own address](trust/domain-limits.md): what we run in a subdomain you delegate, mail
+  records, certificate transparency, cookies and forms, the 30-day redirect, the one sign-in after
+  a move, and how long the zone is kept.
 
 ## Product surfaces, testing, and pilot
 

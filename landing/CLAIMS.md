@@ -54,6 +54,8 @@ a row when its truth state changes; reword the page if a feature is cut.
 | `src-marmelab` | One developer built a self-hosted platform for agent-built internal apps in about two weeks, about 44,000 lines, and estimates one or two more person-months to production grade; MIT, github.com/marmelab/platform. Company SSO for the platform, optional for each app; one database per app; admin dashboard with owner, logs, backups, audit log and a stop switch; reading existing company data is not covered | Public source, below | 2026-10-17 |
 | `src-retool` | Retool, State of AI Governance 2026: 307 senior technology and security leaders (43% CISO, 35% CTO, 22% CIO), surveyed May 2026 with Wynter; 93% at least somewhat concerned about vibe-coded internal tools running in production; 4% have governance that covers AI-generated code however it was written; 5% very confident they have full visibility into what runs in production; 55% want security and access controls in a platform underneath the app, 7% inside each app by the builder; quote "It works. It ships. Nobody logs it anywhere." (an enterprise CISO) | Public source, below | 2026-10-17 |
 
+2026-10-28: apps under a subdomain the customer delegates (decision 004 amendment 2026-10-28) are built and covered by local tests, and unproven: no live domain has been delegated yet. No row above changes and the page makes no claim about it until the live proof in `docs/runbooks/ssc-111-customer-domain-proof.md` passes and the nightly suffix walk is green for seven nights (plan Q5).
+
 ## Built for pilots, not claimed on the page
 
 These exist in the product but are not offered to customers and are not on `index.html`, so they

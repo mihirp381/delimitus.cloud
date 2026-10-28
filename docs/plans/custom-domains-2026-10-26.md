@@ -1,5 +1,22 @@
 # Customer domains plan (2026-10-26, founder decisions recorded)
 
+Status 2026-10-28 (branch `domains/custom-domains-2026-10-26`). "Done" means built and covered by
+local tests; nothing here has run against a live domain. The live proof is CD-7.2.
+
+| Ticket | Done | Owed live |
+|---|---|---|
+| CD-0 | Q1 to Q6 answered 2026-10-26 | - |
+| CD-1.1, CD-1.2 | `apps_suffix`, retired suffixes, hosts by suffix, `suffix` and `previous_suffixes` in the snapshot | A new suffix admitted by a staging gateway within one poll, no restart |
+| CD-2a | `aud` is the environment id; helpers, vectors, data gateway, decision 010 | A flip on staging with every running revision answering 200 and no redeploy |
+| CD-2b | Not built (Q1) | - |
+| CD-3.1 to CD-3.3 | `ssc.org_domain`, agent zone, records, certificate and map entry, agent IAM, probe, retire guard | Zone, records and certificate `ACTIVE` on staging; no 403 on the first create; resolvers see our NS |
+| CD-4.1 to CD-4.3 | Minute tick, states, confirmed flip, 307 from a previous suffix | Timed transitions; the request loop during a flip; flip back and re-flip without a loop |
+| CD-5.1 to CD-5.3 | `Domain=` cookies dropped, `form-action` and `frame-ancestors`, admission with the PSL | A browser on staging: the cookie absent, a foreign form post blocked |
+| CD-6.1 to CD-6.3 | Console page, `ssc domains`, mails and the stall notice; each refusal its own code | Both mails and the stall notice delivered from staging |
+| CD-7.1 | Decision 004 amended, 005, 023, 024 cross-referenced; contracts match the code; `docs/trust/domain-limits.md` | - |
+| CD-7.2 | - | The proof itself; seven green nights; then CLAIMS and the landing FAQ |
+| CD-8 | Deferred (Q4) | - |
+
 Founder answers 2026-10-26: Q1 environment id; Q2 one forced re-login at flip accepted; Q3 zone kept until
 the parent stops delegating, 12-month cap, name never reused; Q4 no aliases in V1 (CD-8 on first paid
 request); Q5 landing claim changes only after CD-7.2 passes; Q6 dedicated-domain option documented as the
@@ -23,6 +40,9 @@ failure mode owned and visible on our side.
 - Snapshot stays frozen and content-addressed; new members are optional like `egress`.
 - CLAIMS `no-domains` stays "Decided" until the live proof in CD-7 passes. Nothing on the landing page
   changes before that.
+- 2026-10-28: `landing/CLAIMS.md` has no `no-domains` row; the page names no customer domain and shows
+  only `*.<label>.delimitusapps.com` addresses. CD-7.1 adds a dated line under the table instead, and a
+  claim row is added only after CD-7.2 (Q5).
 - One sub-agent at a time, minimal comments in new code, `Co-Authored-By` and `Claude-Session` trailers,
   Pulumi from `ssc-ops`, never push `main`.
 - Not before the open GA gates (GA-11, GA-12, GA-13.2) close, unless the founder reorders.

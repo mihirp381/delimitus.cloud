@@ -84,7 +84,7 @@ A Google ID token (RS256, keys from `https://www.googleapis.com/oauth2/v3/certs`
 
 ## The identity note
 
-When present, `X-SSC-Identity` is verified as in `docs/contracts/identity-note.md`, with the cell JWKS (`SSC_IDENTITY_JWKS`), the cell issuer, and the caller environment's own origin as the audience (its host label from the snapshot's `hosts`). Its `org`, `app` and `env` must be the caller's. A `usr_` subject must be active in the snapshot, and a note whose `iat` is earlier than the user's `sessions_not_before` (an admin revoked the user's sessions after it was minted) is refused (`IDENTITY_REFUSED`, logged as "the session was revoked"); a schedule (`sch_`) note is logged as `schedule`. The note is optional, so the app can query for itself (`app_only`); a note that is present and does not verify is refused.
+When present, `X-SSC-Identity` is verified as in `docs/contracts/identity-note.md`, with the cell JWKS (`SSC_IDENTITY_JWKS`), the cell issuer, and the caller's environment id (`env_<20>`, from its token) as the audience (since CD-2a; the host and the org's suffix play no part). Its `org`, `app` and `env` must be the caller's. A `usr_` subject must be active in the snapshot, and a note whose `iat` is earlier than the user's `sessions_not_before` (an admin revoked the user's sessions after it was minted) is refused (`IDENTITY_REFUSED`, logged as "the session was revoked"); a schedule (`sch_`) note is logged as `schedule`. The note is optional, so the app can query for itself (`app_only`); a note that is present and does not verify is refused.
 
 ## Connectors by kind
 

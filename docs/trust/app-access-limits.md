@@ -88,5 +88,6 @@ promise beyond what is written here. Decided for MVP V1 by the founder, 2026-10-
 - Recommendation: for apps that handle sensitive data, or when your other systems under the
   same name were not built expecting a neighbour, give Delimitus a dedicated sub-label
   (`apps.tools.testorg.com` with nothing else under `tools`) or, better for regulated customers,
-  a dedicated domain you register for it (`testorg-tools.com`), which puts the apps on a site of
-  their own. The mechanics are the same.
+  a dedicated domain you register for it (`testorg-tools.com`, delegating a name under it such as
+  `apps.testorg-tools.com`, since a registered domain itself is refused), which puts the apps on a
+  site of their own. The mechanics are the same.
