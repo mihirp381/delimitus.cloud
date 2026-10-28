@@ -191,6 +191,8 @@ def _create_social_org(live, admin: str) -> str:
             admin,
             "--providers",
             "google",
+            "--invite-domains",
+            "rig.example",
             "--cell-label",
             label,
             "--operator",
