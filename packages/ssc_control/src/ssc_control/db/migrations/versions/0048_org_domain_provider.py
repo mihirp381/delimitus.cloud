@@ -1,9 +1,9 @@
 """CD-4: ``ssc.org_domain.provider`` and ``stalled_at``, and the ``domain.delegated`` action.
 
-Revision ID: 0047_org_domain_provider
-Revises: 0046_org_domain
+Revision ID: 0048_org_domain_provider
+Revises: 0047_org_domain
 
-Downgrade drops the columns and restores the 0046 action check ``NOT VALID`` (development
+Downgrade drops the columns and restores the 0047 action check ``NOT VALID`` (development
 databases only).
 """
 
@@ -11,8 +11,8 @@ from pathlib import Path
 
 from alembic import context, op
 
-revision = "0047_org_domain_provider"
-down_revision = "0046_org_domain"
+revision = "0048_org_domain_provider"
+down_revision = "0047_org_domain"
 branch_labels = None
 depends_on = None
 
@@ -67,7 +67,7 @@ def _run(sql: str) -> None:
 
 
 def upgrade() -> None:
-    _run((SQL_DIR / "0047_org_domain_provider.sql").read_text())
+    _run((SQL_DIR / "0048_org_domain_provider.sql").read_text())
 
 
 def downgrade() -> None:

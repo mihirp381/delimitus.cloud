@@ -1,7 +1,7 @@
 """CD-6.3: the ``domain_active`` and ``domain_failed`` outbox kinds.
 
-Revision ID: 0049_domain_mail
-Revises: 0048_form_target
+Revision ID: 0050_domain_mail
+Revises: 0049_form_target
 
 Downgrade restores the 0040 kinds ``NOT VALID`` (development databases only).
 """
@@ -10,8 +10,8 @@ from pathlib import Path
 
 from alembic import context, op
 
-revision = "0049_domain_mail"
-down_revision = "0048_form_target"
+revision = "0050_domain_mail"
+down_revision = "0049_form_target"
 branch_labels = None
 depends_on = None
 
@@ -39,7 +39,7 @@ def _run(sql: str) -> None:
 
 
 def upgrade() -> None:
-    _run((SQL_DIR / "0049_domain_mail.sql").read_text())
+    _run((SQL_DIR / "0050_domain_mail.sql").read_text())
 
 
 def downgrade() -> None:

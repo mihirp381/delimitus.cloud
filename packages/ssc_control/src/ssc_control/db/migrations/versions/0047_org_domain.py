@@ -1,7 +1,7 @@
 """CD-3: ``ssc.org_domain`` and the ``domain.*`` audit actions.
 
-Revision ID: 0046_org_domain
-Revises: 0045_org_suffix
+Revision ID: 0047_org_domain
+Revises: 0046_org_suffix
 
 Downgrade drops the table and restores the 0044 action check ``NOT VALID`` (development
 databases only).
@@ -11,8 +11,8 @@ from pathlib import Path
 
 from alembic import context, op
 
-revision = "0046_org_domain"
-down_revision = "0045_org_suffix"
+revision = "0047_org_domain"
+down_revision = "0046_org_suffix"
 branch_labels = None
 depends_on = None
 
@@ -65,7 +65,7 @@ def _run(sql: str) -> None:
 
 
 def upgrade() -> None:
-    _run((SQL_DIR / "0046_org_domain.sql").read_text())
+    _run((SQL_DIR / "0047_org_domain.sql").read_text())
 
 
 def downgrade() -> None:

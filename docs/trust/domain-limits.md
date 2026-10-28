@@ -84,4 +84,4 @@ feature is built and tested locally and has not yet been run against a live doma
 - The name is never given to anyone else: a retired subdomain is kept on record for your
   organization (`ssc.org_suffix_retired`, its time set to the retire) and no other organization
   may ask for it, a name above it or a name below it. Any future clean-up of that table must keep
-  those rows. [packages/ssc_control db/README.md, revision 0045]
+  those rows. [packages/ssc_control db/README.md, revision 0046]

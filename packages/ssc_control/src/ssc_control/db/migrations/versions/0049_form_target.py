@@ -1,25 +1,24 @@
-"""CD-1: ``org.apps_suffix`` and ``ssc.org_suffix_retired``.
+"""CD-5.2: ``ssc.form_target``, the origins an environment's forms may post to.
 
-Revision ID: 0045_org_suffix
-Revises: 0044_social_sign_in
+Revision ID: 0049_form_target
+Revises: 0048_org_domain_provider
 
-Downgrade drops both (development databases only).
+Downgrade drops the table (development databases only).
 """
 
 from pathlib import Path
 
 from alembic import context, op
 
-revision = "0045_org_suffix"
-down_revision = "0044_social_sign_in"
+revision = "0049_form_target"
+down_revision = "0048_org_domain_provider"
 branch_labels = None
 depends_on = None
 
 SQL_DIR = Path(__file__).resolve().parents[1] / "sql"
 
 DOWNGRADE_SQL = """
-DROP TABLE ssc.org_suffix_retired;
-ALTER TABLE ssc.org DROP COLUMN apps_suffix;
+DROP TABLE ssc.form_target;
 """
 
 
@@ -34,7 +33,7 @@ def _run(sql: str) -> None:
 
 
 def upgrade() -> None:
-    _run((SQL_DIR / "0045_org_suffix.sql").read_text())
+    _run((SQL_DIR / "0049_form_target.sql").read_text())
 
 
 def downgrade() -> None:

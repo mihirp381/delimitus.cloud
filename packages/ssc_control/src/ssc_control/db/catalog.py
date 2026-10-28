@@ -71,15 +71,15 @@ Revision 0044 adds columns only (decision 002 amendment of 2026-10-27): ``org.si
 ``org.social_providers``, the provider names a pilot org signs in with, never a credential.
 Revision 0045 adds a column only (decision 002 amendment of 2026-10-28): ``org.invite_domains``,
 the email domains a social org may invite.
-Revision 0045 adds ``org.apps_suffix`` and ``org_suffix_retired`` (CD-1), keyed by org and
+Revision 0046 adds ``org.apps_suffix`` and ``org_suffix_retired`` (CD-1), keyed by org and
 suffix, so it is in ``UNKEYED_TABLES``: host names the org's apps answered at, nothing else.
-Revision 0046 adds ``org_domain`` (CD-3), an ordinary org-scoped table: an org's delegated zone,
+Revision 0047 adds ``org_domain`` (CD-3), an ordinary org-scoped table: an org's delegated zone,
 its name servers and its certificate's state; retired, never deleted.
-Revision 0047 adds ``org_domain.provider`` and ``stalled_at`` (CD-4): the DNS provider name read
+Revision 0048 adds ``org_domain.provider`` and ``stalled_at`` (CD-4): the DNS provider name read
 at request time and when a stalled certificate was first logged.
-Revision 0048 adds ``form_target`` (CD-5.2), keyed by org, environment and origin, so it is in
+Revision 0049 adds ``form_target`` (CD-5.2), keyed by org, environment and origin, so it is in
 ``UNKEYED_TABLES``: origins an environment's forms may post to, nothing else.
-Revision 0049 adds the ``domain_active`` and ``domain_failed`` outbox kinds (CD-6.3).
+Revision 0050 adds the ``domain_active`` and ``domain_failed`` outbox kinds (CD-6.3).
 """
 
 from collections.abc import Mapping
@@ -134,9 +134,9 @@ TABLES: Final[frozenset[str]] = frozenset(
         "connection_grant",  # SSC-052, revision 0031
         "notification_outbox",  # SSC-049, revision 0032
         "oauth_code",  # SSC gap 7, revision 0033
-        "org_suffix_retired",  # CD-1, revision 0045
-        "org_domain",  # CD-3, revision 0046
-        "form_target",  # CD-5.2, revision 0048
+        "org_suffix_retired",  # CD-1, revision 0046
+        "org_domain",  # CD-3, revision 0047
+        "form_target",  # CD-5.2, revision 0049
     }
 )
 

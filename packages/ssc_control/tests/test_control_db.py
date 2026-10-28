@@ -2413,27 +2413,27 @@ def domain_row(org_id: str, **change: object) -> dict[str, object]:
     } | change
 
 
-def test_0046_adds_org_domain_and_round_trips(dsns: Dsns) -> None:
+def test_0047_adds_org_domain_and_round_trips(dsns: Dsns) -> None:
     with psycopg.connect(dsns.superuser, autocommit=True) as conn:
         conn.execute(f"create database domains owner {MIGRATE_ROLE}")
     dsn = make_url(dsns.migrate).set(database="domains").render_as_string(hide_password=False)
     exists = "select to_regclass('ssc.org_domain') is not null"
-    upgrade(dsn, "0045_org_suffix")
+    upgrade(dsn, "0046_org_suffix")
     before = action_check(dsn)
-    upgrade(dsn, "0046_org_domain")
+    upgrade(dsn, "0047_org_domain")
     assert run(dsn, None, exists) == [(True,)]
     after = action_check(dsn)
     assert after[1]
     old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
     assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | DOMAIN_ACTIONS
-    downgrade(dsn, "0045_org_suffix")
+    downgrade(dsn, "0046_org_suffix")
     assert run(dsn, None, exists) == [(False,)]
     assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
-    upgrade(dsn, "0046_org_domain")
+    upgrade(dsn, "0047_org_domain")
     assert action_check(dsn) == after
 
 
-def test_0047_adds_provider_and_domain_delegated_and_round_trips(dsns: Dsns) -> None:
+def test_0048_adds_provider_and_domain_delegated_and_round_trips(dsns: Dsns) -> None:
     with psycopg.connect(dsns.superuser, autocommit=True) as conn:
         conn.execute(f"create database domains_provider owner {MIGRATE_ROLE}")
     dsn = (
@@ -2445,18 +2445,18 @@ def test_0047_adds_provider_and_domain_delegated_and_round_trips(dsns: Dsns) -> 
         "select count(*) from information_schema.columns where table_schema = 'ssc' "
         "and table_name = 'org_domain' and column_name in ('provider', 'stalled_at')"
     )
-    upgrade(dsn, "0046_org_domain")
+    upgrade(dsn, "0047_org_domain")
     before = action_check(dsn)
-    upgrade(dsn, "0047_org_domain_provider")
+    upgrade(dsn, "0048_org_domain_provider")
     assert run(dsn, None, col) == [(2,)]
     after = action_check(dsn)
     assert after[1]
     old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
     assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | {"domain.delegated"}
-    downgrade(dsn, "0046_org_domain")
+    downgrade(dsn, "0047_org_domain")
     assert run(dsn, None, col) == [(0,)]
     assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
-    upgrade(dsn, "0047_org_domain_provider")
+    upgrade(dsn, "0048_org_domain_provider")
     assert action_check(dsn) == after
 
 
@@ -2504,18 +2504,18 @@ def test_one_live_domain_per_org_and_its_columns_are_checked(dsns: Dsns) -> None
     assert refused(dsns.migrate, None, "truncate ssc.org_domain") == SqlState.TRUNCATE_REFUSED
 
 
-def test_0048_adds_form_target_and_round_trips(dsns: Dsns) -> None:
+def test_0049_adds_form_target_and_round_trips(dsns: Dsns) -> None:
     with psycopg.connect(dsns.superuser, autocommit=True) as conn:
         conn.execute(f"create database form_targets owner {MIGRATE_ROLE}")
     dsn = make_url(dsns.migrate).set(database="form_targets").render_as_string(hide_password=False)
     exists = "select to_regclass('ssc.form_target') is not null"
-    upgrade(dsn, "0047_org_domain_provider")
+    upgrade(dsn, "0048_org_domain_provider")
     assert run(dsn, None, exists) == [(False,)]
-    upgrade(dsn, "0048_form_target")
+    upgrade(dsn, "0049_form_target")
     assert run(dsn, None, exists) == [(True,)]
-    downgrade(dsn, "0047_org_domain_provider")
+    downgrade(dsn, "0048_org_domain_provider")
     assert run(dsn, None, exists) == [(False,)]
-    upgrade(dsn, "0048_form_target")
+    upgrade(dsn, "0049_form_target")
     assert run(dsn, None, exists) == [(True,)]
 
 
@@ -2553,7 +2553,7 @@ def test_form_targets_are_https_origins_of_the_org_s_own_environments(
     assert refused(dsns.migrate, None, "truncate ssc.form_target") == SqlState.TRUNCATE_REFUSED
 
 
-def test_0049_adds_the_domain_mail_kinds_and_round_trips(dsns: Dsns) -> None:
+def test_0050_adds_the_domain_mail_kinds_and_round_trips(dsns: Dsns) -> None:
     with psycopg.connect(dsns.superuser, autocommit=True) as conn:
         conn.execute(f"create database domain_mail owner {MIGRATE_ROLE}")
     dsn = make_url(dsns.migrate).set(database="domain_mail").render_as_string(hide_password=False)
@@ -2562,13 +2562,13 @@ def test_0049_adds_the_domain_mail_kinds_and_round_trips(dsns: Dsns) -> None:
         "where conrelid = 'ssc.notification_outbox'::regclass "
         "and conname = 'notification_outbox_kind_check'"
     )
-    upgrade(dsn, "0048_form_target")
+    upgrade(dsn, "0049_form_target")
     assert "'domain_active'" not in run(dsn, None, kinds)[0][0]
-    upgrade(dsn, "0049_domain_mail")
+    upgrade(dsn, "0050_domain_mail")
     assert "'domain_failed'" in run(dsn, None, kinds)[0][0]
-    downgrade(dsn, "0048_form_target")
+    downgrade(dsn, "0049_form_target")
     assert "'domain_active'" not in run(dsn, None, kinds)[0][0]
-    upgrade(dsn, "0049_domain_mail")
+    upgrade(dsn, "0050_domain_mail")
     assert "'domain_active'" in run(dsn, None, kinds)[0][0]
 
 
