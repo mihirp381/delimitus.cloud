@@ -2429,6 +2429,43 @@ def test_0046_adds_org_domain_and_round_trips(dsns: Dsns) -> None:
     assert action_check(dsn) == after
 
 
+def test_0047_adds_provider_and_domain_delegated_and_round_trips(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database domains_provider owner {MIGRATE_ROLE}")
+    dsn = (
+        make_url(dsns.migrate)
+        .set(database="domains_provider")
+        .render_as_string(hide_password=False)
+    )
+    col = (
+        "select count(*) from information_schema.columns where table_schema = 'ssc' "
+        "and table_name = 'org_domain' and column_name in ('provider', 'stalled_at')"
+    )
+    upgrade(dsn, "0046_org_domain")
+    before = action_check(dsn)
+    upgrade(dsn, "0047_org_domain_provider")
+    assert run(dsn, None, col) == [(2,)]
+    after = action_check(dsn)
+    assert after[1]
+    old = set(re.findall(r"'([a-z_]+\.[a-z_]+)'", before[0]))
+    assert set(re.findall(r"'([a-z_]+\.[a-z_]+)'", after[0])) == old | {"domain.delegated"}
+    downgrade(dsn, "0046_org_domain")
+    assert run(dsn, None, col) == [(0,)]
+    assert action_check(dsn) == (f"{before[0]} NOT VALID", False)
+    upgrade(dsn, "0047_org_domain_provider")
+    assert action_check(dsn) == after
+
+
+def test_the_domain_provider_is_checked(dsns: Dsns) -> None:
+    org = make_org(dsns.app)
+    row = domain_row(org.org_id)
+    assert run(dsns.app, org.org_id, INSERT_DOMAIN, row) == [(row["id"],)]
+    sql = "update ssc.org_domain set provider = %s where id = %s returning id"
+    assert run(dsns.app, org.org_id, sql, ("cloudflare", row["id"])) == [(row["id"],)]
+    for bad in ("", "Cloud Flare", "x" * 33):
+        assert refused(dsns.app, org.org_id, sql, (bad, row["id"])) == CHECK_VIOLATION, bad
+
+
 def test_one_live_domain_per_org_and_its_columns_are_checked(dsns: Dsns) -> None:
     org = make_org(dsns.app)
     good = domain_row(org.org_id)

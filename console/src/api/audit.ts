@@ -84,6 +84,7 @@ const ACTIONS: Readonly<Record<AuditAction, true>> = {
   'domain.failed': true,
   'domain.flipped': true,
   'domain.retired': true,
+  'domain.delegated': true,
   'github.installation_bound': true,
   'repo.connected': true,
   'repo.disconnected': true,

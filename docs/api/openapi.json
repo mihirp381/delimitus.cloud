@@ -1453,6 +1453,7 @@
           "domain.failed",
           "domain.flipped",
           "domain.retired",
+          "domain.delegated",
           "github.installation_bound",
           "repo.connected",
           "repo.disconnected"

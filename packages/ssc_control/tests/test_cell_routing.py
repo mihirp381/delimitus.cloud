@@ -397,6 +397,57 @@ async def test_an_org_s_identity_carries_its_suffix_and_previous_suffixes(dsns: 
         await engine.dispose()
 
 
+async def test_an_active_domain_not_yet_flipped_is_pre_rolled(dsns: Dsns) -> None:
+    e = await asyncio.to_thread(live_env, dsns.app, "Route Preroll")
+    cells, agents = configured(dsns.app, e)
+    engine = ssc_control.db.make_engine(dsns.app)
+    now = [0.0]
+    router = CellRouter(
+        engine,
+        StaticCatalog(cells),
+        apps_domain=DOMAIN,
+        id_tokens=id_token,
+        grant_tokens=id_token,
+        client=agents.client(),
+        clock=lambda: now[0],
+    )
+    label = label_of(dsns.app, e.org)
+    insert = (
+        "insert into ssc.org_domain (id, org_id, suffix, zone_name, state) "
+        "values (%s, %s, 'tools.preroll.com', 'ssc-d-0123456789ab', %s)"
+    )
+    try:
+        with psycopg.connect(dsns.app) as conn:
+            bind_org_sync(conn, e.org)
+            conn.execute(insert, (new_id("dom"), e.org, "issuing"))
+        cell = await router.for_org(e.org)
+        assert cell.domains is not None
+        assert cell.identity is not None and cell.identity.previous_suffixes == ()
+        with psycopg.connect(dsns.app) as conn:
+            bind_org_sync(conn, e.org)
+            conn.execute("update ssc.org_domain set state = 'active' where org_id = %s", (e.org,))
+        now[0] = LABEL_SECONDS + 1
+        rolled = (await router.for_org(e.org)).identity
+        assert rolled is not None
+        assert identity_suffixes(rolled) == (f"{label}.{DOMAIN}", "tools.preroll.com")
+        with psycopg.connect(dsns.app) as conn:
+            bind_org_sync(conn, e.org)
+            conn.execute(
+                "update ssc.org set apps_suffix = 'tools.preroll.com' where id = %s", (e.org,)
+            )
+            conn.execute(
+                "insert into ssc.org_suffix_retired (org_id, suffix, until) "
+                "values (%s, %s, now() + interval '30 days')",
+                (e.org, f"{label}.{DOMAIN}"),
+            )
+        now[0] = 2 * LABEL_SECONDS + 2
+        flipped = (await router.for_org(e.org)).identity
+        assert flipped is not None
+        assert identity_suffixes(flipped) == ("tools.preroll.com", f"{label}.{DOMAIN}")
+    finally:
+        await engine.dispose()
+
+
 # ── ssc.cell (ticket 19) ─────────────────────────────────────────────────────
 
 INSERT_CELL = (

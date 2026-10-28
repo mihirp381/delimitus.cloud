@@ -34,12 +34,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ssc_control.db.bind import bound_org
-from ssc_control.db.orgs import retired_suffixes
+from ssc_control.db.domains import suffix_list
 from ssc_control.deploy.build_driver import BuildDriver
 from ssc_control.deploy.cell_build import CellAgentBuildDriver
 from ssc_control.runtime.app_databases import AppDatabases, CellAppDatabases
 from ssc_control.runtime.cell_agent import CellAgentDriver, IdTokens
 from ssc_control.runtime.cell_datagw import AgentCellSchemas, CellSchemas
+from ssc_control.runtime.cell_domains import AgentCellDomains, CellDomains
 from ssc_control.runtime.cell_egress import AgentCellEgress, CellEgress
 from ssc_control.runtime.cell_logs import AgentCellLogs
 from ssc_control.runtime.cell_removal import AgentCellRemoval, CellRemoval
@@ -117,6 +118,7 @@ class OrgCell:
     """A connection's tables and columns from the cell's data gateway (GA-5.8)."""
     removal: CellRemoval | None = None
     """Deletes a removed app's files and secrets (GA-12)."""
+    domains: CellDomains | None = None
 
 
 class CellPorts(Protocol):
@@ -316,7 +318,7 @@ class CellRouter(CellPorts):
             row = (await conn.execute(_CELL_LABEL, {"org": org_id})).one_or_none()
             if row is None or row[0] is None:
                 raise CellUnavailableError(org_id, None)
-            previous = tuple(r.suffix for r in await retired_suffixes(conn, org_id))
+            previous = await suffix_list(conn, org_id, row[1])
         found = (str(row[0]), row[1], previous)
         self._labels[org_id] = (found, now + LABEL_SECONDS)
         return found
@@ -356,6 +358,7 @@ class CellRouter(CellPorts):
             identity=config.identity(self._domain),
             datagw=AgentCellSchemas(url, tokens, org_id=org_id, client=client),
             removal=AgentCellRemoval(url, tokens, org_id=org_id, client=client),
+            domains=AgentCellDomains(url, tokens, org_id=org_id, client=client),
         )
 
 

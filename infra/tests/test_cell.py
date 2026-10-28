@@ -1464,7 +1464,7 @@ def test_the_agent_makes_domain_zones_but_never_deletes_one(cell_a: list[Declare
     role = one(cell_a, "gcp:projects/iAMCustomRole:IAMCustomRole", "agent-domains").inputs
     assert role["roleId"] == "sscCellAgentDomains"
     assert role["permissions"] == list(cell.DOMAINS_PERMISSIONS)
-    assert len(set(cell.DOMAINS_PERMISSIONS)) == 24
+    assert len(set(cell.DOMAINS_PERMISSIONS)) == 26
     assert "dns.managedZones.delete" not in role["permissions"]
     assert "no zone delete on purpose" in role["description"]
     agent = f"serviceAccount:{naming.sa_email('ssc-cell-agent', naming.cell_project(A))}"

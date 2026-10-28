@@ -73,6 +73,8 @@ Revision 0045 adds ``org.apps_suffix`` and ``org_suffix_retired`` (CD-1), keyed 
 suffix, so it is in ``UNKEYED_TABLES``: host names the org's apps answered at, nothing else.
 Revision 0046 adds ``org_domain`` (CD-3), an ordinary org-scoped table: an org's delegated zone,
 its name servers and its certificate's state; retired, never deleted.
+Revision 0047 adds ``org_domain.provider`` and ``stalled_at`` (CD-4): the DNS provider name read
+at request time and when a stalled certificate was first logged.
 """
 
 from collections.abc import Mapping

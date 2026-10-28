@@ -7,7 +7,7 @@ they first need one.
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Final, cast
@@ -16,6 +16,7 @@ from procrastinate import JobContext
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ssc_control.cell.deployer import CellDeployer
+from ssc_control.domains.probe import Resolver
 from ssc_control.github.client import GitHubApp
 from ssc_control.identity.workos import WorkOSClient
 from ssc_control.notifications.mailer import Mailer
@@ -65,7 +66,7 @@ class Ports:
     (SSC-064). ``github`` None leaves a push job with nothing to do (SSC-047); ``apps_domain``
     makes the preview address it reports. ``mailer`` None leaves queued approval mail waiting
     (SSC-049); ``console_url`` is the link those mails carry; ``mail_from`` (``SSC_MAIL_FROM``)
-    decides whether the welcome offers help by reply."""
+    decides whether the welcome offers help by reply. ``resolvers`` None skips the domains tick."""
 
     engine: AsyncEngine
     cells: CellPorts | None = None
@@ -85,6 +86,7 @@ class Ports:
     mailer: Mailer | None = None
     console_url: str = ""
     mail_from: str | None = None
+    resolvers: Mapping[str, Resolver] | None = None
 
 
 class PortsMissingError(RuntimeError):

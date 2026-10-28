@@ -38,6 +38,8 @@ from ssc_control.db.engine import make_engine
 from ssc_control.deploy import jobs as deploy_jobs
 from ssc_control.deploy.build_driver import FakeBuildDriver
 from ssc_control.deploy.gates import approvals_prod_gate
+from ssc_control.domains import jobs as domains_jobs
+from ssc_control.domains.probe import DohResolver, doh_resolvers
 from ssc_control.github import jobs as github_jobs
 from ssc_control.github.client import DEFAULT_BASE as GITHUB_BASE
 from ssc_control.github.client import GitHubApp
@@ -54,6 +56,7 @@ from ssc_control.runtime import jobs as runtime_jobs
 from ssc_control.runtime.app_databases import FakeAppDatabases
 from ssc_control.runtime.cell_agent import MetadataIdTokens
 from ssc_control.runtime.cell_datagw import FakeCellSchemas
+from ssc_control.runtime.cell_domains import FakeCellDomains
 from ssc_control.runtime.cell_egress import FakeCellEgress
 from ssc_control.runtime.cell_removal import FakeCellRemoval
 from ssc_control.runtime.cells import (
@@ -221,6 +224,7 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
     app.add_tasks_from(
         onboarding_jobs.blueprint(tick_cron=s.onboarding_cron), namespace=onboarding_jobs.NAMESPACE
     )
+    app.add_tasks_from(domains_jobs.blueprint(), namespace=domains_jobs.NAMESPACE)
     return app
 
 
@@ -293,6 +297,7 @@ def cells_of(
             datagw=FakeCellSchemas() if fake else None,
             identity=app_identity_from_env(env),
             removal=FakeCellRemoval() if fake else None,
+            domains=FakeCellDomains() if fake else None,
         )
     )
 
@@ -518,6 +523,7 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
             | FakeCellEgress
             | FakeCellSchemas
             | FakeCellRemoval
+            | FakeCellDomains
             | LogMailer,
         )
     ]
@@ -550,6 +556,7 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         mailer=mailer_from_env(env, console_url),
         console_url=console_url,
         mail_from=env.get(MAIL_FROM_ENV) or None,
+        resolvers=doh_resolvers(),
     )
     refuse_fakes(ports, env)
     return ports
@@ -595,6 +602,9 @@ async def run(env: Mapping[str, str] | None = None) -> None:
             await ports.cells.aclose()
         if isinstance(ports.timer_dispatcher, HttpsScheduleDispatcher):
             await ports.timer_dispatcher.aclose()
+        for resolver in (ports.resolvers or {}).values():
+            if isinstance(resolver, DohResolver):
+                await resolver.aclose()
         await ports.engine.dispose()
 
 

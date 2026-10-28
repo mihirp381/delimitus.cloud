@@ -88,6 +88,7 @@ class AuditAction(StrEnum):
     DOMAIN_FAILED = "domain.failed"
     DOMAIN_FLIPPED = "domain.flipped"
     DOMAIN_RETIRED = "domain.retired"
+    DOMAIN_DELEGATED = "domain.delegated"
     GITHUB_INSTALLATION_BOUND = "github.installation_bound"
     REPO_CONNECTED = "repo.connected"
     REPO_DISCONNECTED = "repo.disconnected"

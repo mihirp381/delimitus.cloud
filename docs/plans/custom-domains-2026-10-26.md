@@ -123,6 +123,11 @@ Success: answered above 2026-10-26; decision 004 amendment drafted (CD-7.1) with
   or a `provisioningIssue`. Operator page at 120 min in `issuing`.
 - Success: states advance on staging without manual steps; each transition is an audit event; a wrong NS
   set stays `pending_dns` with the observed records shown.
+- 2026-10-28: the tick (`domains:tick`) runs every minute, not every 30 s: a minute is enough for a
+  wait counted in hours, and the 72 h and 120 min timers are unchanged. A certificate `provisioning`
+  with a detail (an authorization still in progress reads the same) stays `issuing` with the detail
+  shown as its failure text; only a `FAILED` certificate fails the row. `stalled_at` (revision 0047)
+  makes the 120 min `domain_stalled` log line fire once per row across workers and restarts.
 
 **CD-4.2 Atomic publish with confirm.**
 - Admin confirms the flip in the console (list of apps that move, like Pando's `--confirm`). Job: write `apps_suffix`, push old suffix to `previous_suffixes` with
