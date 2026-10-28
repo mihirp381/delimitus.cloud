@@ -367,7 +367,8 @@ until docker exec ssc-rig-pg pg_isready -q -h 127.0.0.1 -U postgres; do sleep 1;
 eval "$(uv run python tools/dev_stack.py up --dsn postgresql://postgres:pw@localhost:55432/postgres)"
 LABEL=l$(openssl rand -hex 6)
 ORG=$(uv run python -m ssc_control.identity create-social-org --name "Rig pilot" \
-  --admin-email <admin's Google address> --providers google --cell-label $LABEL --operator op_<you>)
+  --admin-email <admin's Google address> --providers google --invite-domains gmail.com \
+  --allow-consumer-domain --cell-label $LABEL --operator op_<you>)
 echo $ORG
 uv run python tools/dev_stack.py serve --port 8000
 ```
