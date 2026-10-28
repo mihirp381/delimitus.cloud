@@ -27,6 +27,7 @@ __all__ = [
     "all_org_ids",
     "create_org",
     "create_org_in",
+    "open_org_in",
 ]
 
 SYSTEM_ACTOR: Final = Actor(kind=ActorKind.OPERATOR, id="system:create_org")
@@ -79,7 +80,7 @@ async def create_org_in(
     (``new_id("org")``). A caller that adds more work to the same transaction, such as the
     operator's ``create-org``, gets all of it or none of it."""
     admin_id, link_id = new_id("usr"), new_id("idl")
-    label = (await conn.execute(_INSERT_ORG, {"id": org_id, "name": spec.name})).scalar_one()
+    label = await _insert_org(conn, org_id, spec.name)
     await conn.execute(
         _INSERT_ADMIN,
         {"id": admin_id, "org": org_id, "name": spec.admin_display_name, "email": spec.admin_email},
@@ -94,6 +95,25 @@ async def create_org_in(
             "subject": spec.admin_subject,
         },
     )
+    await _open_chain(conn, org_id, spec.name, actor or SYSTEM_ACTOR)
+    return CreatedOrg(
+        org_id=org_id, admin_user_id=admin_id, identity_link_id=link_id, cell_label=label
+    )
+
+
+async def open_org_in(conn: AsyncConnection, org_id: str, name: str, *, actor: Actor) -> str:
+    """The org, its audit head, index row and ``org.created``, with no admin yet: the caller adds
+    the first one in the same transaction. Returns the generated cell label."""
+    label = await _insert_org(conn, org_id, name)
+    await _open_chain(conn, org_id, name, actor)
+    return label
+
+
+async def _insert_org(conn: AsyncConnection, org_id: str, name: str) -> str:
+    return str((await conn.execute(_INSERT_ORG, {"id": org_id, "name": name})).scalar_one())
+
+
+async def _open_chain(conn: AsyncConnection, org_id: str, name: str, actor: Actor) -> None:
     await conn.execute(_INSERT_HEAD, {"org": org_id, "hash": GENESIS_HASH})
     await conn.execute(_INSERT_INDEX, {"org": org_id})
     await append_event(
@@ -101,14 +121,11 @@ async def create_org_in(
         NewEvent(
             org_id=org_id,
             action=AuditAction.ORG_CREATED,
-            actor=actor or SYSTEM_ACTOR,
+            actor=actor,
             target_kind="org",
             target_id=org_id,
-            after={"name": spec.name},
+            after={"name": name},
         ),
-    )
-    return CreatedOrg(
-        org_id=org_id, admin_user_id=admin_id, identity_link_id=link_id, cell_label=str(label)
     )
 
 
