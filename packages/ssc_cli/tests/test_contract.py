@@ -86,6 +86,10 @@ RESPONSES = (
     models.ApprovalDecided,
     models.RequiredCheckIn,
     models.RepoLinkOut,
+    models.PreviousSuffixOut,
+    models.DelegationOut,
+    models.AppMoveOut,
+    models.DomainOut,
 )
 REQUESTS = (
     models.AppCreate,
@@ -101,6 +105,8 @@ REQUESTS = (
     models.PersonDecisionIn,
     models.LinkIn,
     models.RepoLinkIn,
+    models.DomainIn,
+    models.FlipIn,
 )
 
 

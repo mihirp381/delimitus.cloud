@@ -49,6 +49,9 @@ responses in `openapi.json` name that code:
 The agent interface has no tool for any of these. An admin's own session gets past the check
 on every one of them (the matrix checks this too).
 
+An app's address comes from the org's suffix, which `get_status` shows in each environment's
+`url`; an agent cannot change where apps live.
+
 ## What the matrix proves
 
 Offline, against two orgs on one control plane, with an agent of org A attacking org B. 415

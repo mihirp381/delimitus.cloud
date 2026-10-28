@@ -575,6 +575,39 @@ class RepoLinkOut(Wire):
     updated_at: str
 
 
+class PreviousSuffixOut(Wire):
+    suffix: str
+    until: str
+
+
+class DelegationOut(Wire):
+    id: str
+    suffix: str
+    state: str
+    name_servers: list[str]
+    observed_ns: dict[str, list[str]] | None = None
+    failure: str | None = None
+    provider: str | None = None
+    created_at: str
+    updated_at: str
+    last_delegated_at: str | None = None
+
+
+class AppMoveOut(Wire):
+    slug: str
+    hosts: list[str]
+
+
+class DomainOut(Wire):
+    default_suffix: str
+    current_suffix: str
+    previous: list[PreviousSuffixOut]
+    delegation: DelegationOut | None = None
+    apps_that_move: list[AppMoveOut]
+    ready_to_flip: bool
+    rolling: int
+
+
 class Body(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -629,3 +662,12 @@ class RepoLinkIn(Body):
     repository: str
     branch: str | None = None
     required_checks: list[RequiredCheckIn] = Field(default_factory=list[RequiredCheckIn])
+
+
+class DomainIn(Body):
+    suffix: str
+
+
+class FlipIn(Body):
+    to: str
+    confirm: bool

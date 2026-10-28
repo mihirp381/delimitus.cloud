@@ -65,7 +65,10 @@ from ssc_cli.models import (
     DatabaseRotateOut,
     DeploymentCreate,
     DeploymentPolicy,
+    DomainIn,
+    DomainOut,
     EnvironmentConnectionsOut,
+    FlipIn,
     GrantIn,
     GrantsIn,
     GrantsOut,
@@ -175,6 +178,16 @@ class ApiClient:
 
     def deployment_policy(self) -> DeploymentPolicy:
         return _parse(self._send("GET", "/v1/org/deployment-policy"), DeploymentPolicy)
+
+    def get_domain(self) -> DomainOut:
+        return _parse(self._send("GET", "/v1/domain"), DomainOut)
+
+    def request_domain(self, suffix: str) -> DomainOut:
+        return _parse(self._send("PUT", "/v1/domain", body=DomainIn(suffix=suffix)), DomainOut)
+
+    def flip_domain(self, to: str) -> DomainOut:
+        body = FlipIn(to=to, confirm=True)
+        return _parse(self._send("POST", "/v1/domain/flip", body=body), DomainOut)
 
     def list_connections(self) -> ConnectionsOut:
         """Every data connection of the org."""

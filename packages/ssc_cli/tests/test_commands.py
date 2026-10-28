@@ -34,6 +34,7 @@ from ssc_cli.shapes import (
     DeployResult,
     DisableResult,
     DoctorResult,
+    DomainResult,
     ErrorResult,
     InitResult,
     LogLineRow,
@@ -90,6 +91,7 @@ ALLOWED = {
     "connect",
     "approvals",
     "repo",
+    "domains",
 }
 
 
@@ -173,6 +175,10 @@ def test_help_lists_exact_set(cli):
         ("repo", "connect"),
         ("repo", "show"),
         ("repo", "disconnect"),
+        ("domains", "show"),
+        ("domains", "add"),
+        ("domains", "status"),
+        ("domains", "flip"),
     }
     for group, subs in (
         ("token", {"set", "clear", "create-ci", "list-ci", "revoke-ci"}),
@@ -184,6 +190,7 @@ def test_help_lists_exact_set(cli):
         ("logins", {"list", "link"}),
         ("audit", {"export", "verify"}),
         ("repo", {"connect", "show", "disconnect"}),
+        ("domains", {"show", "add", "status", "flip"}),
     ):
         text = cli(group, "--help").stdout.split("Commands:\n", 1)[1]
         assert {line.split()[0] for line in text.splitlines() if line.startswith("  ")} == subs
@@ -1300,6 +1307,9 @@ def test_every_command_has_json(on_live, live, tmp_path):
         ("doctor",): ([str(CLEAN)], DoctorResult, None),
         ("requirements",): ([], PlatformRequirements, None),
         ("policy",): ([], PolicyResult, None),
+        ("domains", "show"): ([], DomainResult, None),
+        ("domains", "add"): ([f"tools.{name}.example"], DomainResult, None),
+        ("domains", "status"): ([], DomainResult, None),
         ("connections",): ([], ConnectionsResult, None),
         ("approvals", "list"): ([], ApprovalsResult, None),
         ("logins", "list"): ([], UnlinkedLoginsResult, None),
@@ -1319,7 +1329,8 @@ def test_every_command_has_json(on_live, live, tmp_path):
     # `token create-ci` needs a login at an auth host, and `token revoke-ci` a CI token;
     # test_ci_tokens.py covers their --json. `apps delete-status` needs the id of a removal;
     # test_admin_commands.py covers its --json. `connect` needs a data connection the dev stack
-    # does not have; test_connections.py covers its --json.
+    # does not have; test_connections.py covers its --json. `domains flip` needs an active own
+    # address; test_domains.py covers its --json.
     expected = (
         {
             ("mcp",),
@@ -1331,6 +1342,7 @@ def test_every_command_has_json(on_live, live, tmp_path):
             ("logins", "link"),
             ("token", "create-ci"),
             ("token", "revoke-ci"),
+            ("domains", "flip"),
         }
         | {("approvals", name) for name in ("show", "approve", "reject")}
         | {("repo", name) for name in ("connect", "show", "disconnect")}

@@ -517,6 +517,39 @@ class PolicyResult(Shape):
     how_to_ask_for_a_package: str
 
 
+class DomainPreviousRow(Shape):
+    suffix: str
+    until: str
+
+
+class DomainAppRow(Shape):
+    slug: str
+    hosts: list[str]
+
+
+class DomainResult(Shape):
+    """``domains``: where the org's apps live and its own address, when one was asked for.
+    ``state`` is null until ``domains add``; ``observed`` is every NS the public resolvers saw."""
+
+    api_url: str
+    default_suffix: str
+    current_suffix: str
+    moved: bool
+    previous: list[DomainPreviousRow]
+    suffix: str | None
+    state: str | None
+    zone: str | None
+    name_servers: list[str]
+    records: list[str]
+    observed: list[str]
+    failure: str | None
+    provider: str | None
+    apps_that_move: list[DomainAppRow]
+    ready_to_flip: bool
+    rolling: int
+    it_ticket: str | None
+
+
 class ConnectionRow(Shape):
     """One data connection. ``ceiling`` is ``org`` or ``group:<id>`` and ``user:<id>`` entries;
     ``over_ceiling_since`` is set for an environment's connection whose audience is now wider
@@ -797,5 +830,8 @@ SHAPES: dict[str, type[BaseModel]] = {
         CiTokensResult,
         CiTokenRevoked,
         ConnectResult,
+        DomainPreviousRow,
+        DomainAppRow,
+        DomainResult,
     )
 }
