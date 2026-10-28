@@ -84,7 +84,9 @@ of the name or email ignoring case, `status`, `limit` and `cursor`, each person 
 In a pilot org in social mode (`whoami.sign_in_mode`), active admins outside an agent session
 `POST /v1/users/invite` an address (`201`, or `200` with the person who already has it) and
 `POST /v1/users/{id}/deactivate` or `/reactivate`; deactivation ends every session and refresh token
-in the same transaction. A directory org answers `DIRECTORY_MANAGED`.
+in the same transaction. Invites and reactivations take only addresses at the org's email domains
+(`whoami.invite_domains`, an exact match after the last `@`) and answer `INVITE_DOMAIN_NOT_ALLOWED`
+otherwise. A directory org answers `DIRECTORY_MANAGED`.
 `GET /v1/apps?builder=me` lists the apps the caller may ship source to: every app for an admin,
 the apps they own, and those with a builder grant on any environment. `GET /v1/groups?name=`
 returns every group with that name, ignoring case, with its active member count, to anyone who

@@ -242,21 +242,29 @@ database reachable as in `docs/runbooks/ssc-064-control-plane.md` step 10 (`SSC_
 ```sh
 LABEL=l$(openssl rand -hex 6)
 ORG=$(uv run python -m ssc_control.identity create-social-org --name "<org name>" \
-  --admin-email <admin email> --providers google,microsoft --cell-label $LABEL --operator op_<you>)
+  --admin-email <admin email> --providers google,microsoft --invite-domains <company domain> \
+  --cell-label $LABEL --operator op_<you>)
 echo $ORG
 ```
 
 The command asks for the admin email again (`Confirm admin email:`; `--confirm-admin-email`
 gives it in a script) and refuses if the two differ. It then shows the admin email, the org
-name, the providers and the cell label, and writes the org only if you type `confirm`; anything
+name, the providers, the invite domains and the cell label, and writes the org only if you type `confirm`; anything
 else, or no answer, writes nothing. Check the address letter by letter: it cannot be fixed
 afterwards, since `restore-admin` refuses an invited person who never signed in. The prompts go
 to stderr, so `ORG=$(...)` still captures only the org id.
 
+`--invite-domains` takes 1 to 10 comma-separated domains, such as `acme.com,acme.co.uk`. Only
+addresses whose part after the last `@` equals one of them exactly may be invited, reactivated or
+signed in: `eng.acme.com` needs its own entry, and there are no wildcards. The admin email must be
+at one of them, or the command refuses before the prompt. A consumer mail domain such as
+`gmail.com` is refused unless `--allow-consumer-domain` is given, for a founder test org on the
+rig only; the audit `after` records it.
+
 Pass: the org id on stdout. One transaction makes the org in social mode, its first admin as an
 invited person and its cell label, audited `org.created`, `org.updated` (the mode),
 `user.invited` and `org.updated` (the label). A bad provider, label or address, or a label
-another org has, writes nothing and says why. Leave `github` out of `--providers`, as above. The org has no
+another org has, or a missing or bad `--invite-domains`, writes nothing and says why. Leave `github` out of `--providers`, as above. The org has no
 onboarding row and directory sync skips it.
 
 Then build the org's cell, before anyone deploys an app, the way `create-org` expects: the label
@@ -276,22 +284,27 @@ org's providers: the sign-in links them, makes them active and takes their name 
 Until then People shows them as Invited, and `restore-admin` refuses them: in a social org it
 restores only a person who has signed in once.
 
-### Change a social org's providers **[real]**
+### Change a social org's providers or domains **[real]**
 
 `create-social-org` is the only way into social mode: a directory org is never moved to it, and
 `set-sign-in --mode social` on one refuses and writes nothing. For an org already in social mode:
 
 ```sh
 uv run python -m ssc_control.identity set-sign-in --org <org_…> --mode social \
-  --providers google,microsoft --operator op_<you>
+  --providers google,microsoft --invite-domains acme.com,acme.co.uk --operator op_<you>
 ```
 
-Pass: `<org_…> social` on stdout. `--mode directory` with no `--providers` takes the org out of
-social mode, for good.
+Both lists are given in full each time and replace the old ones. Removing a domain that an invited
+or active person still uses is refused with their `usr_` ids and addresses; deactivate them in
+People first. A person whose domain is removed is refused at their next sign-in.
+
+Pass: `<org_…> social` on stdout. `--mode directory` with no `--providers` or `--invite-domains`
+takes the org out of social mode, for good.
 
 ### Invite people **[real]**
 
-As an org admin, open People in the console, Invite by email, and invite each pilot person. They
+As an org admin, open People in the console, Invite by email, and invite each pilot person. The
+dialog lists the org's domains and refuses any other address before sending it. They
 show under Invited until their first sign-in. A person signs in with one provider: the first one
 links, and another provider with the same address is refused, so each provider's check below
 needs its own invited address.
@@ -307,6 +320,11 @@ Not yet run. Tick each line and record the date and the `usr_` ids under Record.
       same page and `login.failed` reason `email_not_verified`; then set the providers back.
 - [ ] An address nobody invited is refused with the same page as every other refusal, and the
       audit chain has `login.failed` with the reason.
+- [ ] Inviting an address outside the org's domains (another company, a Gmail address, a
+      subdomain) is refused in the dialog, and `POST /v1/users/invite` answers
+      `INVITE_DOMAIN_NOT_ALLOWED` and writes nothing.
+- [ ] After `set-sign-in` drops a domain whose only person was deactivated, reactivating them is
+      refused with `INVITE_DOMAIN_NOT_ALLOWED`.
 - [ ] `ssc login` from the command line goes through the same chooser.
 - [ ] Deactivate a signed-in person from People: their next console request and `ssc whoami` fail,
       and the command line's refresh fails.
