@@ -234,7 +234,7 @@ def test_a_page_over_the_weight_limit_is_refused() -> None:
 
 def test_the_sign_in_link_is_the_one_link_to_another_origin() -> None:
     assert SIGN_IN == "https://console.delimitus.com/login"
-    page = f'<a class="nav__link" href="{SIGN_IN}">Sign in</a><a href="{SIGN_IN}">Sign in</a>'
+    page = f'<a class="btn" href="{SIGN_IN}">Sign in</a><a href="{SIGN_IN}">Sign in</a>'
     check_page(page, len(page))
 
 

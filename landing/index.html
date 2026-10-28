@@ -75,7 +75,7 @@
   --r-sm: 6px; --r-md: 12px; --r-lg: 18px; --r-xl: 24px; --r-2xl: 32px;
   --pad: clamp(20px, 5vw, 64px);
   --maxw: 1200px;
-  --nav-h: 57px;
+  --nav-h: 64px;
   --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 32px -12px rgba(0, 0, 0, 0.10);
   --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.04), 0 34px 70px -34px rgba(29, 29, 31, 0.28);
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
@@ -135,14 +135,23 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .brand { display: flex; align-items: center; gap: 4.5px; color: var(--ink); text-decoration: none; }
 .brand__mark { display: block; flex: none; width: 22px; height: 22px; }
 .brand__word { display: block; flex: none; width: 82.9px; height: 13.9px; }
-.nav__links { display: flex; gap: 28px; margin-left: auto; }
-.nav__links a { color: var(--ink-2); text-decoration: none; font-size: 0.8rem; letter-spacing: -0.005em; transition: color 140ms var(--ease); }
+.nav .brand { gap: 5px; }
+.nav .brand__mark { width: 24px; height: 24px; }
+.nav .brand__word { width: 91.2px; height: 15.3px; }
+.nav__links { display: flex; gap: 32px; margin-left: auto; }
+.nav__links a { color: var(--ink-2); text-decoration: none; font-size: 0.9rem; letter-spacing: -0.005em; white-space: nowrap; transition: color 140ms var(--ease); }
 .nav__links a:hover { color: var(--ink); }
-.nav__act { display: flex; align-items: center; gap: 20px; margin-left: 12px; }
-.nav__link { color: var(--ink-2); text-decoration: none; font-size: 0.8rem; letter-spacing: -0.005em; white-space: nowrap; padding-block: 10px; transition: color 140ms var(--ease); }
-.nav__link:hover { color: var(--ink); }
-@media (max-width: 860px) { .nav__in { gap: 18px; } .nav__links { gap: 18px; } .nav__act { margin-left: 0; } }
-@media (max-width: 699px) { .nav__links { display: none; } .nav__act { margin-left: auto; gap: 14px; } }
+.nav__act { display: flex; align-items: center; gap: 12px; margin-left: 12px; }
+.nav__act .btn { white-space: nowrap; }
+@media (max-width: 1099px) { .nav__links { gap: 24px; } .nav__links .nav__wide { display: none; } }
+@media (max-width: 860px) { .nav__in { gap: 18px; } .nav__links { gap: 18px; } .nav__links .nav__mid { display: none; } .nav__act { margin-left: 0; gap: 10px; } }
+@media (max-width: 699px) { .nav__links { display: none; } .nav__act { margin-left: auto; } }
+@media (max-width: 400px) {
+  .nav__in { gap: 12px; }
+  .nav .brand__mark { width: 22px; height: 22px; }
+  .nav .brand__word { width: 82.9px; height: 13.9px; }
+  .nav__act .btn { padding: 9px 12px; }
+}
 
 /* ── buttons and chips ───────────────────────────────────────────────── */
 .btn {
@@ -939,13 +948,15 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
     </a>
     <div class="nav__links">
       <a href="#how">How it works</a>
-      <a href="#works">Works with</a>
+      <a class="nav__wide" href="#example">Example</a>
+      <a class="nav__mid" href="#works">Works with</a>
+      <a class="nav__wide" href="#get">What you get</a>
       <a href="#security">Security</a>
       <a href="#cost">Cost</a>
-      <a href="#faq">Questions</a>
+      <a class="nav__mid" href="#faq">Questions</a>
     </div>
     <div class="nav__act">
-      <a class="nav__link" href="https://console.delimitus.com/login">Sign in</a>
+      <a class="btn btn--ghost btn--sm" href="https://console.delimitus.com/login">Sign in</a>
       <a class="btn btn--primary btn--sm" href="#pilot">Request a pilot</a>
     </div>
   </div>
