@@ -311,9 +311,12 @@ Not yet run. Tick each line and record the date and the `usr_` ids under Record.
 - [ ] Deactivate a signed-in person from People: their next console request and `ssc whoami` fail,
       and the command line's refresh fails.
 - [ ] Reactivate them: they sign in again with the same `usr_` id.
-- [ ] `create-social-org` on the staging or pilot cell, or on the rig (below); its admin signs
-      in with Google and People shows them as an active admin.
-- [ ] That admin invites one person, who signs in with Google.
+- [x] `create-social-org` on the staging or pilot cell, or on the rig (below); its admin signs
+      in with Google and People shows them as an active admin. Passed 2026-10-28 on the rig
+      against WorkOS staging: the email asked twice, `confirm`, then the admin's Google sign-in
+      linked them (`identity.linked`, `login.succeeded`).
+- [x] That admin invites one person, who signs in with Google. Passed 2026-10-28 on the rig:
+      `user.invited` by the admin's `usr_`, then the person's Google sign-in made them active.
 
 ### The last two lines on the rig **[real]**
 
