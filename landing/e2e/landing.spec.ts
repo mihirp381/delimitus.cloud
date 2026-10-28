@@ -49,12 +49,30 @@ test('signs in at the console from the nav and the hero', async ({ page }) => {
   await page.goto('/');
   const signIn = page.locator('a[href="https://console.delimitus.com/login"]');
   await expect(signIn).toHaveCount(2);
-  await expect(page.locator('.nav__act .nav__link')).toHaveText('Sign in');
-  await expect(page.locator('.nav__act .nav__link')).toBeVisible();
+  const navSignIn = page.locator('.nav__act .btn--ghost');
+  await expect(navSignIn).toHaveText('Sign in');
+  await expect(navSignIn).toBeVisible();
   await expect(page.locator('.hero__cta .btn', { hasText: 'Sign in' })).toBeVisible();
   // WebKit leaves links out of the Tab order by default, so focus it directly.
-  await page.locator('.nav__act .nav__link').focus();
-  await expect(page.locator('.nav__act .nav__link')).toBeFocused();
+  await navSignIn.focus();
+  await expect(navSignIn).toBeFocused();
+});
+
+test('the nav shows both buttons, and all seven links on a wide screen', async ({ page }) => {
+  await page.goto('/');
+  const buttons = page.locator('.nav__act .btn');
+  await expect(buttons).toHaveText(['Sign in', 'Request a pilot']);
+  for (const button of await buttons.all()) await expect(button).toBeInViewport({ ratio: 1 });
+  const links = page.locator('.nav__links a');
+  await expect(links).toHaveCount(7);
+  if ((page.viewportSize()?.width ?? 0) >= 1440) {
+    for (const link of await links.all()) await expect(link).toBeVisible();
+    expect(await links.evaluateAll((all) => all.map((a) => a.getAttribute('href')))).toEqual(
+      ['#how', '#example', '#works', '#get', '#security', '#cost', '#faq'],
+    );
+  } else {
+    await expect(page.locator('.nav__links')).toBeHidden();
+  }
 });
 
 test('has no sideways scroll', async ({ page }) => {
