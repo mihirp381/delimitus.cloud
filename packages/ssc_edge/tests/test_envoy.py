@@ -116,6 +116,11 @@ class Echo(BaseHTTPRequestHandler):
         self.send_header("set-cookie", "__Host-ssc-session=evil; Path=/; Secure")
         self.send_header("Set-Cookie", "__secure-SSC-x=1; Secure")
         self.send_header("set-cookie", "app=2; Path=/")
+        if self.path.startswith("/cookies"):
+            self.send_header("set-cookie", "wide=3; Path=/; Domain=testorg.com")
+            self.send_header("set-cookie", "Wide=4;domain =.testorg.com;Secure")
+            self.send_header("set-cookie", "loud=5; Secure;  DOMAIN=testorg.com")
+            self.send_header("set-cookie", "keep=domain=x; Path=/domain=y; SameSite=Lax")
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         if self.path.startswith("/slow-body/"):
@@ -394,6 +399,15 @@ def test_an_allowed_request_reaches_the_app_with_only_the_minted_note(stack: Sta
     note = verify(token, audience=PROD, keys=keys, issuer=f"https://keys.example.test/{LABEL}")
     assert note.app.startswith("app_")
     assert r.headers.get_list("set-cookie") == ["app=2; Path=/"]
+
+
+def test_an_app_cookie_that_names_a_domain_never_reaches_the_browser(stack: Stack) -> None:
+    r = stack.get(HOST, "/cookies", headers={"cookie": stack.world.cookie()})
+    assert r.status_code == 200, r.text
+    assert r.headers.get_list("set-cookie") == [
+        "app=2; Path=/",
+        "keep=domain=x; Path=/domain=y; SameSite=Lax",
+    ]
 
 
 def test_a_timer_call_reaches_the_app_with_a_schedule_note_and_without_its_token(
