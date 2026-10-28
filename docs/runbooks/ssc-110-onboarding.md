@@ -90,4 +90,5 @@ It is refused once the row is `live`, and while the org exists (`identity=org_cr
 
 - **Mail unset.** With no mailer (`SSC_SMTP_HOST` unset) the welcome stays queued. Tell the admin by hand: the console link, the org id and `uvx --from ssc-cli ssc login`. The welcome offers "Reply to this mail for help" only when `SSC_MAIL_FROM` is a mailbox someone reads; production's `noreply@delimitus.com` gets no help line.
 - **Worker without WorkOS.** The tick uses the worker's directory-sync client (`SSC_WORKOS_API_KEY`, `SSC_WORKOS_CLIENT_ID`). Without them it logs `onboarding tick skipped` and does nothing; run `tick` by hand. `SSC_ONBOARDING_TICK_CRON` changes its schedule (default `*/5 * * * *`).
+- **Social orgs.** A pilot org made by `identity create-social-org` (runbook ssc-019, Pilot social sign-in) has no onboarding row: no WorkOS organisation, no directory and no welcome mail. Tell its admin the console link and the org id by hand.
 - **Orgs made before.** Orgs made by `identity create-org` with `cells request` (the earlier step 10) keep working and have no onboarding row. Those commands stay for repairs; a new customer starts here.

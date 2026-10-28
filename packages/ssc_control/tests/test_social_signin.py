@@ -19,7 +19,8 @@ import jwt
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from ssc_testkit import Dsns, assert_problem, make_org
 from test_auth_host import AUTH, SECRET, Rig, client_for, onward, run, settings
 from test_identity import OPERATOR, World, new_world
@@ -34,7 +35,7 @@ from ssc_control.api.settings import USER_AUDIENCE
 from ssc_control.audit.chain import Actor
 from ssc_control.db import bound_org
 from ssc_control.identity import __main__ as cli
-from ssc_control.identity import pages, sessions, social, tokens
+from ssc_control.identity import operator, pages, sessions, social, tokens
 from ssc_control.identity.authhost import AuthHost
 from ssc_control.identity.cell_callers import DevCallers
 from ssc_control.snapshot.service import compile_lock
@@ -43,6 +44,14 @@ ADA = "ada@example.com"
 GOOGLE_SUB, GITHUB_SUB = "110248495921238986420", "583231"
 BOB_SUB = "117512345678901234567"
 SOCIAL_CONN = "conn_01SOCIAL"
+_FORCE_SOCIAL = text(
+    "update ssc.org set sign_in_mode = 'social', social_providers = cast(:providers as text[]) "
+    "where id = :org"
+)
+
+
+async def force_social(conn: AsyncConnection, org: str, providers: tuple[str, ...]) -> None:
+    await conn.execute(_FORCE_SOCIAL, {"org": org, "providers": list(providers)})
 
 
 @asynccontextmanager
@@ -51,7 +60,13 @@ async def rig_for(dsns: Dsns, providers: tuple[str, ...] = ()) -> AsyncIterator[
     await w.tick()
     if providers:
         async with bound_org(w.engine, w.org) as conn:
-            await social.set_sign_in(conn, w.org, "social", providers, actor=OPERATOR)
+            await force_social(conn, w.org, providers)
+    async with rig_on(dsns, w) as rig:
+        yield rig
+
+
+@asynccontextmanager
+async def rig_on(dsns: Dsns, w: World) -> AsyncIterator[OAuthRig]:
     (label,) = await w.rows("select cell_label from ssc.org where id = :org")
     s = settings(dsns, console_url=CONSOLE)
     signer = tokens.Signer(s.signing_pem, s.signing_kid, s.auth_url)
@@ -358,7 +373,7 @@ def social_world(dsns: Dsns) -> tuple[World, dict[str, str], str]:
         await w.tick()
         cat = await invite(w, "cat@example.com", "active")
         async with bound_org(w.engine, w.org) as conn:
-            await social.set_sign_in(conn, w.org, "social", ("google",), actor=OPERATOR)
+            await force_social(conn, w.org, ("google",))
             sids = {
                 who: await sessions.open_session(
                     conn,
@@ -485,35 +500,82 @@ def test_deactivation_locks_out_on_the_next_request(dsns: Dsns) -> None:
 # ── the operator command ─────────────────────────────────────────────────────
 
 
-def test_the_operator_sets_and_reverts_social_mode(
+def org_updates(dsns: Dsns, org: str) -> list[tuple[Any, ...]]:
+    with psycopg.connect(dsns.superuser) as conn:
+        return conn.execute(
+            "select actor_kind, actor_id, before, after from ssc.audit_event "
+            "where org_id = %s and action = 'org.updated' and actor_id = 'op_dana' order by seq",
+            (org,),
+        ).fetchall()
+
+
+def mode_of(dsns: Dsns, org: str) -> tuple[Any, ...] | None:
+    with psycopg.connect(dsns.superuser) as conn:
+        return conn.execute(
+            "select sign_in_mode, social_providers from ssc.org where id = %s", (org,)
+        ).fetchone()
+
+
+def test_the_operator_changes_a_social_orgs_providers_and_reverts_it(
     dsns: Dsns, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setenv("SSC_DATABASE_DSN", dsns.app)
-    org = make_org(dsns.app, "Pilot")
-    base = ["set-sign-in", "--org", org.org_id, "--operator", "op_dana"]
+    org = run(
+        dsns,
+        lambda e: operator.create_social_org(
+            e,
+            name="Pilot",
+            admin_email=ADA,
+            providers=("google",),
+            cell_label="s" + secrets.token_hex(6),
+            actor=OPERATOR,
+        ),
+    ).org_id
+    base = ["set-sign-in", "--org", org, "--operator", "op_dana"]
     assert cli.main([*base, "--mode", "social", "--providers", "google,GitHub"]) == 0
     assert cli.main([*base, "--mode", "social", "--providers", "google,github"]) == 0
-    assert capsys.readouterr().out.splitlines() == [
-        f"{org.org_id} social",
-        f"{org.org_id} social (unchanged)",
-    ]
+    assert capsys.readouterr().out.splitlines() == [f"{org} social", f"{org} social (unchanged)"]
     assert cli.main([*base, "--mode", "social"]) == 2
     assert cli.main([*base, "--mode", "directory", "--providers", "google"]) == 2
     with pytest.raises(SystemExit):
         cli.main([*base, "--mode", "social", "--providers", "facebook"])
     assert cli.main([*base, "--mode", "directory"]) == 0
-    with psycopg.connect(dsns.superuser) as conn:
-        rows = conn.execute(
-            "select actor_kind, actor_id, before, after from ssc.audit_event "
-            "where org_id = %s and action = 'org.updated' order by seq",
-            (org.org_id,),
-        ).fetchall()
-        mode = conn.execute(
-            "select sign_in_mode, social_providers from ssc.org where id = %s", (org.org_id,)
-        ).fetchone()
-    assert [(r[0], r[1], r[3]["sign_in_mode"]) for r in rows] == [
-        ("operator", "op_dana", "social"),
-        ("operator", "op_dana", "directory"),
+    capsys.readouterr()
+    assert cli.main([*base, "--mode", "social", "--providers", "google"]) == 1
+    assert "cannot move to social mode" in capsys.readouterr().err
+    rows = org_updates(dsns, org)
+    assert [(r[0], r[1], r[2]["social_providers"], r[3]["sign_in_mode"]) for r in rows] == [
+        ("operator", "op_dana", ["google"], "social"),
+        ("operator", "op_dana", ["google", "github"], "directory"),
     ]
     assert rows[0][3]["social_providers"] == ["google", "github"]
-    assert mode == ("directory", [])
+    assert mode_of(dsns, org) == ("directory", [])
+
+
+def test_a_directory_org_is_refused_social_mode_and_nothing_is_written(
+    dsns: Dsns, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("SSC_DATABASE_DSN", dsns.app)
+    org = make_org(dsns.app, "Directory").org_id
+    with psycopg.connect(dsns.superuser) as conn:
+        count = "select count(*) from ssc.audit_event where org_id = %s"
+        before = conn.execute(count, (org,)).fetchone()
+    argv = ["set-sign-in", "--org", org, "--operator", "op_dana", "--mode", "social"]
+    assert cli.main([*argv, "--providers", "google"]) == 1
+    err = capsys.readouterr().err
+    assert err == (
+        f"not set: {org} is a directory org and cannot move to social mode; a social pilot is "
+        "a new org, made with create-social-org\n"
+    )
+
+    async def direct(engine: AsyncEngine) -> None:
+        async with bound_org(engine, org) as conn:
+            await social.set_sign_in(conn, org, "social", ("google",), actor=OPERATOR)
+
+    with pytest.raises(social.SignInError, match="cannot move to social mode"):
+        run(dsns, direct)
+    assert cli.main([*argv[:-1], "directory"]) == 0
+    assert capsys.readouterr().out == f"{org} directory (unchanged)\n"
+    with psycopg.connect(dsns.superuser) as conn:
+        assert conn.execute(count, (org,)).fetchone() == before
+    assert mode_of(dsns, org) == ("directory", [])
