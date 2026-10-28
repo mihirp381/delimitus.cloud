@@ -91,6 +91,22 @@ describe('your own address', () => {
     expect(await within(form).findByText(/at least three labels/)).toBeTruthy();
   });
 
+  it('shows why a rule refused the suffix', async () => {
+    const detail = 'This name, a name above it or a name under it is used by another organization.';
+    await domainPage(() => json(200, domain()), {
+      'PUT /v1/domain': () => problem(409, 'DOMAIN_SUFFIX_HELD', 'Another organization uses this address.', detail),
+    });
+    const form = await screen.findByRole('form', { name: 'Create your own address' });
+    const input = within(form).getByLabelText('Subdomain to delegate');
+    fireEvent.change(input, { target: { value: 'eu.tools.acme.com' } });
+    await act(async () => {
+      fireEvent.click(within(form).getByRole('button', { name: 'Create address' }));
+    });
+    expect(await within(form).findByText(detail)).toBeTruthy();
+    expect(within(form).queryByText(/at least three labels/)).toBeNull();
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+  });
+
   it('shows the records, the ticket, the provider steps and what the internet sees', async () => {
     const writeText = vi.fn(() => Promise.resolve());
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } });

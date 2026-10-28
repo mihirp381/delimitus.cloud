@@ -10,6 +10,7 @@ from ssc_cli.credentials import SERVICE
 from ssc_cli.errors import ExitCode
 from ssc_cli.session import Session
 from ssc_cli.shapes import DomainResult, ErrorResult
+from ssc_contracts.errors import CATALOGUE, ErrorCode, problem_type
 
 SUFFIX = "tools.acme.example"
 NS = ["ns-cloud-a1.googledomains.com", "ns-cloud-a2.googledomains.com"]
@@ -104,6 +105,26 @@ def test_add_refused_names_the_rules(cli, api, fake_problem):
     assert r.code == ExitCode.FAILED
     error = ErrorResult.model_validate(r.json()).error
     assert (error.code, error.fix) == ("VALIDATION_FAILED", ADMISSION_RULES)
+
+
+@pytest.mark.parametrize("code", [ErrorCode.DOMAIN_SUFFIX_PUBLIC, ErrorCode.DOMAIN_SUFFIX_HELD])
+def test_add_refused_by_a_rule_prints_why(cli, api, code):
+    entry = CATALOGUE[code]
+    body = {
+        "type": problem_type(code),
+        "title": entry.title,
+        "status": entry.status,
+        "detail": entry.detail,
+        "instance": "/v1/domain",
+        "code": code.value,
+        "request_id": "req_test",
+    }
+    api.add("PUT", "/v1/domain", httpx2.Response(entry.status, json=body))
+    r = cli("domains", "add", "tools.co.uk", session=api.session())
+    assert r.code == ExitCode.FAILED
+    assert entry.title in r.stderr
+    assert entry.detail in r.stderr
+    assert ADMISSION_RULES not in r.stderr
 
 
 def test_status_is_one_line_per_field(cli, api):

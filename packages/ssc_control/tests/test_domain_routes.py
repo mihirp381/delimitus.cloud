@@ -188,12 +188,18 @@ async def test_admission_refuses_what_cannot_be_the_org_s_suffix(b: Bench) -> No
         b.w.org,
         name(b, "old"),
     )
-    refusals = (default(b), name(b, "old"), "tools.co.uk", "apps.delimitus.com")
-    for suffix in ("localhost", "UPPER.testorg.com", *refusals):
-        r = put(b, suffix, b.t.admin)
-        assert_problem(r, ErrorCode.VALIDATION_FAILED)
+    refusals = {
+        "localhost": ErrorCode.DOMAIN_SUFFIX_TOO_SHORT,
+        "UPPER.testorg.com": ErrorCode.VALIDATION_FAILED,
+        default(b): ErrorCode.DOMAIN_SUFFIX_RESERVED,
+        "apps.delimitus.com": ErrorCode.DOMAIN_SUFFIX_RESERVED,
+        "tools.co.uk": ErrorCode.DOMAIN_SUFFIX_PUBLIC,
+        name(b, "old"): ErrorCode.DOMAIN_SUFFIX_OWN,
+    }
+    for suffix, code in refusals.items():
+        assert_problem(put(b, suffix, b.t.admin), code)
     execute(b.dsn, b.w.org, "update ssc.org set apps_suffix = %s", name(b, "mine"))
-    assert_problem(put(b, name(b, "mine"), b.t.admin), ErrorCode.VALIDATION_FAILED)
+    assert_problem(put(b, name(b, "mine"), b.t.admin), ErrorCode.DOMAIN_SUFFIX_OWN)
     assert fake.calls == []
 
 
@@ -261,7 +267,7 @@ async def test_a_failed_domain_is_replaced(b: Bench) -> None:
         "domain.requested",
     ]
     set_state(b, "failed")
-    assert_problem(put(b, name(b), b.t.admin), ErrorCode.VALIDATION_FAILED)
+    assert_problem(put(b, name(b), b.t.admin), ErrorCode.DOMAIN_SUFFIX_OWN)
 
 
 async def test_a_suffix_another_org_holds_already_exists(b: Bench, rival: str) -> None:
@@ -276,6 +282,7 @@ async def test_a_suffix_another_org_holds_already_exists(b: Bench, rival: str) -
         "ssc-d-0123456789ab",
     )
     assert_problem(put(b, name(b), b.t.admin), ErrorCode.ALREADY_EXISTS)
+    assert_problem(put(b, f"eu.{name(b)}", b.t.admin), ErrorCode.DOMAIN_SUFFIX_HELD)
     assert rows_of(b.dsn, b.w.org, "select id from ssc.org_domain") == []
     assert domain_audit(b) == []
 

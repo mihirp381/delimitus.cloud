@@ -1361,9 +1361,10 @@ export interface paths {
         /**
          * Request Domain
          * @description Ask for ``suffix`` as the org's customer domain: the cell makes its zone and
-         *     certificate, and the answer names the NS records to add at the parent. The same suffix again
-         *     changes nothing; another while one is live is ``ALREADY_EXISTS``, unless that one failed,
-         *     which it replaces. Audited as ``domain.requested``.
+         *     certificate, and the answer names the NS records to add at the parent. A name the admission
+         *     rules refuse answers its own ``DOMAIN_SUFFIX_*`` code. The same suffix again changes nothing;
+         *     another while one is live is ``ALREADY_EXISTS``, unless that one failed, which it replaces.
+         *     Audited as ``domain.requested``.
          */
         put: operations["request_domain_v1_domain_put"];
         post?: never;
@@ -3345,7 +3346,7 @@ export interface components {
          * ErrorCode
          * @enum {string}
          */
-        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "REQUEST_TOO_LARGE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "DIRECTORY_MANAGED" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "CONFIRMATION_MISMATCH" | "APP_OPERATION_IN_FLIGHT" | "APP_DELETING" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "CEILING_REQUIRED" | "CONNECTOR_UNAVAILABLE" | "CONNECTION_NOT_GRANTED" | "CONNECTION_SUSPENDED" | "DATA_SNAPSHOT_STALE" | "CONNECTION_UNAVAILABLE" | "QUERY_TIMEOUT" | "DOMAIN_NOT_READY" | "DOMAIN_STATE" | "CELL_UNAVAILABLE" | "TRANSIENT_CONFLICT" | "INTERNAL";
+        ErrorCode: "VALIDATION_FAILED" | "NOT_FOUND" | "METHOD_NOT_ALLOWED" | "UNSUPPORTED_MEDIA_TYPE" | "REQUEST_TOO_LARGE" | "UNAUTHENTICATED" | "FORBIDDEN" | "RATE_LIMITED" | "IDEMPOTENCY_KEY_REQUIRED" | "IDEMPOTENCY_KEY_REUSED" | "IDEMPOTENCY_IN_FLIGHT" | "PRECONDITION_REQUIRED" | "PRECONDITION_STALE" | "ALREADY_EXISTS" | "REFERENCE_NOT_FOUND" | "DEPLOYMENT_IN_FLIGHT" | "LAST_ORG_ADMIN" | "DIRECTORY_MANAGED" | "OWNER_NOT_ACTIVE" | "RECORD_IMMUTABLE" | "SCHEDULE_DELETED" | "APPROVAL_REQUIRED" | "APPROVAL_NOT_PENDING" | "SELF_APPROVAL_REFUSED" | "AGENT_SESSION_REFUSED" | "APPROVER_NOT_ELIGIBLE" | "MANIFEST_INVALID" | "BUNDLE_TOO_LARGE" | "BUNDLE_MALFORMED" | "SECRET_IN_BUNDLE" | "BUNDLE_DIGEST_MISMATCH" | "BUNDLE_NOT_UPLOADED" | "UPLOAD_URL_INVALID" | "APP_NOT_ACTIVE" | "BUILD_IN_FLIGHT" | "ADD_APPROVED_PACKAGE" | "RELEASE_ENVIRONMENT_MISMATCH" | "KILL_SWITCH_IN_FLIGHT" | "APP_ALREADY_ACTIVE" | "CONFIRMATION_MISMATCH" | "APP_OPERATION_IN_FLIGHT" | "APP_DELETING" | "TIMER_RUN_IN_FLIGHT" | "SCHEDULE_CANNOT_RESUME" | "NOTHING_TO_PROMOTE" | "PROD_REQUIRES_PROMOTE" | "PROD_SECRET_MISSING" | "SECRETS_UNAVAILABLE" | "DB_TIER_FULL" | "DATABASE_UNAVAILABLE" | "SNAPSHOT_UNCONFIRMED" | "SCHEMA_AHEAD" | "LOGS_RATE_LIMITED" | "LOGS_UNAVAILABLE" | "AGENT_LOGS_OFF" | "REPOSITORY_NOT_INSTALLED" | "REQUIRED_CHECKS_FAILING" | "GITHUB_UNAVAILABLE" | "CEILING_REQUIRED" | "CONNECTOR_UNAVAILABLE" | "CONNECTION_NOT_GRANTED" | "CONNECTION_SUSPENDED" | "DATA_SNAPSHOT_STALE" | "CONNECTION_UNAVAILABLE" | "QUERY_TIMEOUT" | "DOMAIN_NOT_READY" | "DOMAIN_STATE" | "DOMAIN_SUFFIX_TOO_SHORT" | "DOMAIN_SUFFIX_PUBLIC" | "DOMAIN_SUFFIX_RESERVED" | "DOMAIN_SUFFIX_HELD" | "DOMAIN_SUFFIX_OWN" | "CELL_UNAVAILABLE" | "TRANSIENT_CONFLICT" | "INTERNAL";
         /** ExplainedGrant */
         ExplainedGrant: {
             /** Grant Id */
@@ -10894,7 +10895,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `ALREADY_EXISTS` */
+            /** @description `DOMAIN_SUFFIX_HELD`, `DOMAIN_SUFFIX_OWN`, `ALREADY_EXISTS` */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -10912,7 +10913,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
-            /** @description `VALIDATION_FAILED` */
+            /** @description `VALIDATION_FAILED`, `DOMAIN_SUFFIX_TOO_SHORT`, `DOMAIN_SUFFIX_PUBLIC`, `DOMAIN_SUFFIX_RESERVED` */
             422: {
                 headers: {
                     [name: string]: unknown;

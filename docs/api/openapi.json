@@ -4258,6 +4258,11 @@
           "QUERY_TIMEOUT",
           "DOMAIN_NOT_READY",
           "DOMAIN_STATE",
+          "DOMAIN_SUFFIX_TOO_SHORT",
+          "DOMAIN_SUFFIX_PUBLIC",
+          "DOMAIN_SUFFIX_RESERVED",
+          "DOMAIN_SUFFIX_HELD",
+          "DOMAIN_SUFFIX_OWN",
           "CELL_UNAVAILABLE",
           "TRANSIENT_CONFLICT",
           "INTERNAL"
@@ -16381,7 +16386,7 @@
         ]
       },
       "put": {
-        "description": "Ask for ``suffix`` as the org's customer domain: the cell makes its zone and\ncertificate, and the answer names the NS records to add at the parent. The same suffix again\nchanges nothing; another while one is live is ``ALREADY_EXISTS``, unless that one failed,\nwhich it replaces. Audited as ``domain.requested``.",
+        "description": "Ask for ``suffix`` as the org's customer domain: the cell makes its zone and\ncertificate, and the answer names the NS records to add at the parent. A name the admission\nrules refuse answers its own ``DOMAIN_SUFFIX_*`` code. The same suffix again changes nothing;\nanother while one is live is ``ALREADY_EXISTS``, unless that one failed, which it replaces.\nAudited as ``domain.requested``.",
         "operationId": "request_domain_v1_domain_put",
         "requestBody": {
           "content": {
@@ -16432,7 +16437,7 @@
                 }
               }
             },
-            "description": "`ALREADY_EXISTS`"
+            "description": "`DOMAIN_SUFFIX_HELD`, `DOMAIN_SUFFIX_OWN`, `ALREADY_EXISTS`"
           },
           "413": {
             "content": {
@@ -16452,7 +16457,7 @@
                 }
               }
             },
-            "description": "`VALIDATION_FAILED`"
+            "description": "`VALIDATION_FAILED`, `DOMAIN_SUFFIX_TOO_SHORT`, `DOMAIN_SUFFIX_PUBLIC`, `DOMAIN_SUFFIX_RESERVED`"
           },
           "429": {
             "content": {

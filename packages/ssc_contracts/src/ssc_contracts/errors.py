@@ -110,9 +110,14 @@ class ErrorCode(StrEnum):
     DATA_SNAPSHOT_STALE = "DATA_SNAPSHOT_STALE"
     CONNECTION_UNAVAILABLE = "CONNECTION_UNAVAILABLE"
     QUERY_TIMEOUT = "QUERY_TIMEOUT"
-    # customer domains (CD-4)
+    # customer domains (CD-4, CD-5.3)
     DOMAIN_NOT_READY = "DOMAIN_NOT_READY"
     DOMAIN_STATE = "DOMAIN_STATE"
+    DOMAIN_SUFFIX_TOO_SHORT = "DOMAIN_SUFFIX_TOO_SHORT"
+    DOMAIN_SUFFIX_PUBLIC = "DOMAIN_SUFFIX_PUBLIC"
+    DOMAIN_SUFFIX_RESERVED = "DOMAIN_SUFFIX_RESERVED"
+    DOMAIN_SUFFIX_HELD = "DOMAIN_SUFFIX_HELD"
+    DOMAIN_SUFFIX_OWN = "DOMAIN_SUFFIX_OWN"
     # placement
     CELL_UNAVAILABLE = "CELL_UNAVAILABLE"
     # ours
@@ -519,6 +524,39 @@ CATALOGUE: Final[dict[ErrorCode, CatalogueEntry]] = {
         409,
         "The domain is not in a state that allows this.",
         "Nothing was changed. Read GET /v1/domain for the domain's state.",
+    ),
+    ErrorCode.DOMAIN_SUFFIX_TOO_SHORT: CatalogueEntry(
+        422,
+        "The address needs at least three labels.",
+        "Ask for a name under a domain your company owns, such as tools.example.com, not for "
+        "the domain itself. Nothing was changed.",
+    ),
+    ErrorCode.DOMAIN_SUFFIX_PUBLIC: CatalogueEntry(
+        422,
+        "The address is a public suffix or a registered domain.",
+        "A name on the Public Suffix List, such as co.uk, or a domain registered directly under "
+        "one, such as example.co.uk, cannot be delegated. Ask for a name under a domain your "
+        "company owns, such as tools.example.co.uk. Nothing was changed.",
+    ),
+    ErrorCode.DOMAIN_SUFFIX_RESERVED: CatalogueEntry(
+        422,
+        "The address is under a Delimitus domain.",
+        "Names under delimitus.com and delimitusapps.com, the organization's default address "
+        "among them, are not yours to delegate. Ask for a name under a domain your company "
+        "owns. Nothing was changed.",
+    ),
+    ErrorCode.DOMAIN_SUFFIX_HELD: CatalogueEntry(
+        409,
+        "Another organization uses this address.",
+        "This name, a name above it or a name under it is used, or was used, by another "
+        "organization, so it cannot be delegated here. Ask for a different name. Nothing was "
+        "changed.",
+    ),
+    ErrorCode.DOMAIN_SUFFIX_OWN: CatalogueEntry(
+        409,
+        "Your organization already uses or used this address.",
+        "Your apps live under this name now, or your organization gave it up before, and a name "
+        "given up is never taken back. Ask for a different name. Nothing was changed.",
     ),
     ErrorCode.CELL_UNAVAILABLE: CatalogueEntry(
         503,

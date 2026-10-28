@@ -178,7 +178,9 @@ function RequestPanel() {
   const [error, setError] = useState<unknown>(null);
   const inputId = useId();
   const typed = suffix.trim().toLowerCase().replace(/\.$/, '');
-  const refused = error instanceof ApiProblem && error.code === 'VALIDATION_FAILED';
+  const code = error instanceof ApiProblem ? error.code : undefined;
+  const malformed = code === 'VALIDATION_FAILED';
+  const refused = malformed || Boolean(code?.startsWith('DOMAIN_SUFFIX_'));
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -215,7 +217,7 @@ function RequestPanel() {
           />
         </label>
         {error ? <ProblemNotice error={error} /> : null}
-        {refused ? <p className="muted">{ADMISSION_RULES}</p> : null}
+        {malformed ? <p className="muted">{ADMISSION_RULES}</p> : null}
         <Notice tone="warn" role="note">
           <p>
             Apps under your domain share it with your other sites: an app there can set cookies and receive forms for

@@ -43,6 +43,13 @@ router = APIRouter()
 
 _READ: Final = (*AUTHENTICATED, ErrorCode.FORBIDDEN, ErrorCode.CELL_UNAVAILABLE)
 _CHANGE: Final = (*_READ, ErrorCode.AGENT_SESSION_REFUSED)
+_ADMISSION: Final = (
+    ErrorCode.DOMAIN_SUFFIX_TOO_SHORT,
+    ErrorCode.DOMAIN_SUFFIX_PUBLIC,
+    ErrorCode.DOMAIN_SUFFIX_RESERVED,
+    ErrorCode.DOMAIN_SUFFIX_HELD,
+    ErrorCode.DOMAIN_SUFFIX_OWN,
+)
 
 
 class PreviousSuffixOut(Strict):
@@ -164,20 +171,19 @@ async def get_domain(request: Request, uow: UserUoW) -> DomainOut:
 @router.put(
     "/domain",
     response_model=DomainOut,
-    responses=problem_responses(*_CHANGE, ErrorCode.ALREADY_EXISTS),
+    responses=problem_responses(*_CHANGE, *_ADMISSION, ErrorCode.ALREADY_EXISTS),
 )
 async def request_domain(request: Request, body: DomainIn, uow: UserUoW) -> DomainOut:
     """Ask for ``suffix`` as the org's customer domain: the cell makes its zone and
-    certificate, and the answer names the NS records to add at the parent. The same suffix again
-    changes nothing; another while one is live is ``ALREADY_EXISTS``, unless that one failed,
-    which it replaces. Audited as ``domain.requested``."""
+    certificate, and the answer names the NS records to add at the parent. A name the admission
+    rules refuse answers its own ``DOMAIN_SUFFIX_*`` code. The same suffix again changes nothing;
+    another while one is live is ``ALREADY_EXISTS``, unless that one failed, which it replaces.
+    Audited as ``domain.requested``."""
     await _change(uow)
     rt = runtime_of(request)
     refused = await admit(uow.conn, uow.org_id, body.suffix, apps_domain=rt.settings.apps_domain)
     if refused is not None:
-        raise Refusal(
-            ErrorCode.VALIDATION_FAILED, evidence={"suffix": body.suffix, "reason": refused}
-        )
+        raise Refusal(refused, evidence={"suffix": body.suffix})
     live = await domain_of(uow.conn, uow.org_id)
     if live is not None and live.state != "failed":
         if live.suffix == body.suffix:

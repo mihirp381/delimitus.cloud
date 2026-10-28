@@ -12,15 +12,17 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from ssc_testkit import ISSUER, Dsns
 
+from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_control.db import bound_org, make_engine
 from ssc_control.db.orgs import NewOrg, create_org
 from ssc_control.domains.admission import LOCK_CLASS, admit
 
 APPS = "delimitusapps.com"
-ABOVE = "the suffix is above a suffix another organization uses or used"
-BELOW = "the suffix is under a suffix another organization uses or used"
-TAKEN = "another organization uses or used the suffix"
+HELD = ErrorCode.DOMAIN_SUFFIX_HELD
+SHORT = ErrorCode.DOMAIN_SUFFIX_TOO_SHORT
+PUBLIC = ErrorCode.DOMAIN_SUFFIX_PUBLIC
+RESERVED = ErrorCode.DOMAIN_SUFFIX_RESERVED
 
 
 @dataclass(frozen=True)
@@ -44,7 +46,7 @@ async def o(dsns: Dsns) -> AsyncIterator[Orgs]:
     await engine.dispose()
 
 
-async def admitted(o: Orgs, suffix: str, org: str | None = None) -> str | None:
+async def admitted(o: Orgs, suffix: str, org: str | None = None) -> ErrorCode | None:
     async with bound_org(o.engine, org or o.mine) as conn:
         return await admit(conn, org or o.mine, suffix, apps_domain=APPS)
 
@@ -67,25 +69,25 @@ async def hold_domain(o: Orgs, org: str, suffix: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("suffix", "reason"),
+    ("suffix", "code"),
     [
-        ("example.com", "a suffix needs at least three labels, such as tools.example.com"),
-        ("localhost", "a suffix needs at least three labels, such as tools.example.com"),
-        ("Tools.example.com", "not a usable apps suffix: 'Tools.example.com'"),
-        ("tools.delimitus.com", "the suffix is under a Delimitus domain"),
-        ("a.b.delimitusapps.com", "the suffix is under a Delimitus domain"),
-        ("x.kawasaki.jp", "the suffix is a public suffix"),
-        ("k12.ak.us", "the suffix is a public suffix"),
-        ("tools.co.uk", "the suffix is a registered domain; ask for a name under it"),
-        ("a.x.kawasaki.jp", "the suffix is a registered domain; ask for a name under it"),
-        ("city.kawasaki.jp", "the suffix is a registered domain; ask for a name under it"),
-        ("tools.xn--55qx5d.cn", "the suffix is a registered domain; ask for a name under it"),
+        ("example.com", SHORT),
+        ("localhost", SHORT),
+        ("Tools.example.com", ErrorCode.VALIDATION_FAILED),
+        ("tools.delimitus.com", RESERVED),
+        ("a.b.delimitusapps.com", RESERVED),
+        ("x.kawasaki.jp", PUBLIC),
+        ("k12.ak.us", PUBLIC),
+        ("tools.co.uk", PUBLIC),
+        ("a.x.kawasaki.jp", PUBLIC),
+        ("city.kawasaki.jp", PUBLIC),
+        ("tools.xn--55qx5d.cn", PUBLIC),
     ],
 )
 async def test_a_suffix_that_cannot_be_a_customer_suffix_is_refused(
-    o: Orgs, suffix: str, reason: str
+    o: Orgs, suffix: str, code: ErrorCode
 ) -> None:
-    assert await admitted(o, suffix) == reason
+    assert await admitted(o, suffix) == code
 
 
 @pytest.mark.parametrize(
@@ -101,9 +103,9 @@ async def test_another_org_s_current_suffix_is_refused_with_its_ancestors_and_de
     held = f"tools.{o.base}"
     await hold_domain(o, o.theirs, held)
     await hold(o, o.theirs, "update ssc.org set apps_suffix = :s where id = :org", s=held)
-    assert await admitted(o, held) == TAKEN
-    assert await admitted(o, o.base) == ABOVE
-    assert await admitted(o, f"eu.{held}") == BELOW
+    assert await admitted(o, held) == HELD
+    assert await admitted(o, o.base) == HELD
+    assert await admitted(o, f"eu.{held}") == HELD
     assert await admitted(o, f"crm.{o.base}") is None
     assert await admitted(o, f"eu.{held}", o.theirs) is None
 
@@ -118,17 +120,17 @@ async def test_another_org_s_previous_suffix_is_refused_with_its_ancestors_and_d
         "insert into ssc.org_suffix_retired (org_id, suffix, until) values (:org, :s, now())",
         s=old,
     )
-    assert await admitted(o, old) == TAKEN
-    assert await admitted(o, f"apps.{o.base}") == ABOVE
-    assert await admitted(o, f"x.{old}") == BELOW
+    assert await admitted(o, old) == HELD
+    assert await admitted(o, f"apps.{o.base}") == HELD
+    assert await admitted(o, f"x.{old}") == HELD
 
 
 async def test_another_org_s_requested_domain_is_refused_above_and_below(o: Orgs) -> None:
     asked = f"tools.{o.base}"
     await hold_domain(o, o.theirs, asked)
     assert await admitted(o, asked) is None
-    assert await admitted(o, o.base) == ABOVE
-    assert await admitted(o, f"eu.{asked}") == BELOW
+    assert await admitted(o, o.base) == HELD
+    assert await admitted(o, f"eu.{asked}") == HELD
 
 
 async def test_the_check_holds_one_lock_until_the_caller_commits(o: Orgs) -> None:
@@ -155,4 +157,4 @@ async def test_the_check_holds_one_lock_until_the_caller_commits(o: Orgs) -> Non
                 "zone": f"ssc-d-{secrets.token_hex(6)}",
             },
         )
-    assert await asyncio.wait_for(rival, 10) == BELOW
+    assert await asyncio.wait_for(rival, 10) == HELD
