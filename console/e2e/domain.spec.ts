@@ -47,6 +47,8 @@ test('an admin delegates a subdomain, moves the apps to it and back', async ({ p
   await expect(page.getByRole('heading', { name: 'Waiting for your DNS change' })).toBeVisible();
   const records = page.getByRole('table', { name: 'NS records to add' });
   const values = records.getByRole('row').locator('td:nth-child(3) code');
+  devStack('domains-tick');
+  await page.reload();
   await expect(values.first()).toBeVisible();
   const nameServers = await values.allTextContents();
   expect(nameServers.length).toBeGreaterThan(0);
@@ -106,6 +108,8 @@ test('a failed certificate shows the reason and asks again', async ({ page, requ
   await form.getByRole('button', { name: 'Create address' }).click();
   await expect(page.getByRole('heading', { name: 'Waiting for your DNS change' })).toBeVisible();
   const values = page.getByRole('table', { name: 'NS records to add' }).getByRole('row').locator('td:nth-child(3) code');
+  devStack('domains-tick');
+  await page.reload();
   await expect(values.first()).toBeVisible();
 
   devStack('fake-dns', suffix, ...(await values.allTextContents()));
