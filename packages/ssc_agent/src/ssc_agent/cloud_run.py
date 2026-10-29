@@ -76,6 +76,7 @@ SETTLE_TIMEOUT_SECONDS: Final = 180.0
 RESERVED_ENV: Final = frozenset({"PORT", "K_SERVICE", "K_REVISION", "K_CONFIGURATION"})
 """Cloud Run sets these itself and refuses them in a template; ``PORT`` is the container port."""
 CONFLICT_TRIES: Final = 6
+TRANSIENT_TRIES: Final = 5
 CA_VOLUME: Final = "ssc-db-ca"
 CA_DIR, _, CA_FILE = DATABASE_CA_PATH.rpartition("/")
 IDENTITY_TRIES: Final = 8
@@ -86,6 +87,8 @@ _HTTP_TOO_MANY: Final = 429
 _HTTP_PRECONDITION: Final = 412
 _HTTP_BAD_REQUEST: Final = 400
 _HTTP_FORBIDDEN: Final = 403
+# Cloud Run answers these while it settles a service (seen in production, 2026-10-29).
+_HTTP_TRANSIENT: Final = frozenset({502, 503, 504})
 # Fields a PATCH sends; the rest of a Service is output only or unused by SSC.
 _WRITABLE: Final = ("labels", "ingress", "invokerIamDisabled", "scaling", "template", "traffic")
 
@@ -265,8 +268,6 @@ class CloudRunDriver(RuntimeDriver):
         template = _obj(svc.get("template"))
         body = _writable(svc)
         body["labels"] = dict(spec.labels)
-        body["ingress"] = INGRESS
-        body["invokerIamDisabled"] = False
         body["scaling"] = _automatic(spec)
         if matches:
             revision = max(matches, key=lambda r: traffic.get(_short(r["name"]), 0))
@@ -418,6 +419,10 @@ class CloudRunDriver(RuntimeDriver):
             svc = await self._get_service(service)
             if svc is None:
                 raise ServiceNotFoundError(service)
+            if _reconciling(svc):
+                # A service mid-change reads half-filled: let the last change finish.
+                await self.wait_settled(service)
+                continue
             body = change(svc, await self._revisions(service))
             try:
                 await self._patch(service, body)
@@ -469,13 +474,22 @@ class CloudRunDriver(RuntimeDriver):
         params: Mapping[str, str] | None = None,
     ) -> Json:
         what = f"{method} {url.removeprefix(RUN_API).removeprefix(IAM_API)}"
-        headers = {"Authorization": f"Bearer {await self._tokens()}"}
-        try:
-            response = await self._client.request(
-                method, url, json=json, params=dict(params or {}), headers=headers
-            )
-        except httpx2.HTTPError as exc:
-            raise RuntimeDriverError(f"{what}: {type(exc).__name__}") from None
+        attempt = 0
+        while True:
+            last = attempt == TRANSIENT_TRIES - 1
+            headers = {"Authorization": f"Bearer {await self._tokens()}"}
+            try:
+                response = await self._client.request(
+                    method, url, json=json, params=dict(params or {}), headers=headers
+                )
+            except httpx2.HTTPError as exc:
+                if last or not isinstance(exc, httpx2.TransportError):
+                    raise RuntimeDriverError(f"{what}: {type(exc).__name__}") from None
+            else:
+                if last or response.status_code not in _HTTP_TRANSIENT:
+                    break
+            await self._sleep(min(2.0**attempt, 10.0))
+            attempt += 1
         if response.status_code >= _HTTP_BAD_REQUEST:
             raise _ApiError(what, response.status_code, _reason(response))
         if not response.content:
@@ -651,7 +665,12 @@ def _bare(value: Any) -> Any:
 
 
 def _writable(svc: Json) -> Json:
-    return {k: svc[k] for k in _WRITABLE if k in svc} | {"etag": svc.get("etag")}
+    """Ingress and the invoker check are always SSC's, whatever the read returned."""
+    return {k: svc[k] for k in _WRITABLE if k in svc} | {
+        "etag": svc.get("etag"),
+        "ingress": INGRESS,
+        "invokerIamDisabled": False,
+    }
 
 
 def _latest(svc: Json) -> str | None:
