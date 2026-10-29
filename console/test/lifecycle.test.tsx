@@ -1091,6 +1091,23 @@ describe('admin actions', () => {
     expect((await within(dialog).findByRole('alert')).textContent).toContain('OWNER_NOT_ACTIVE');
   });
 
+  it.each([
+    ['ownerless', 2],
+    ['blocked', 0],
+  ] as const)('links an app that is %s to its environments %i times', async (state, links) => {
+    const base = app('active');
+    const served = {
+      ...base,
+      owner_name: 'Olive Owner',
+      owner_state: state,
+      environments: base.environments.map((e) => ({ ...e, url: `https://${e.name}.example.test` })),
+    };
+    start(`/apps/${APP_ID}`, page({ [`GET ${APP_PATH}`]: () => json(200, served) }), signedIn());
+    const notice = (await screen.findByText('No owner. Assign one.', {}, { timeout: FIRST_RENDER_MS })).closest('.notice');
+    expect(notice?.textContent?.includes('The app is turned off')).toBe(state === 'blocked');
+    expect(screen.queryAllByRole('link', { name: /^Open / })).toHaveLength(links);
+  });
+
   it('warns of an app with no owner and offers to assign one', async () => {
     const ownerless = { ...app('active'), owner_name: 'Olive Owner', owner_state: 'ownerless' };
     const { api } = start(

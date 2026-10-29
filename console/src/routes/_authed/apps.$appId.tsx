@@ -64,7 +64,7 @@ function AppView({ app }: { readonly app: AppOut }) {
   const environments = [...app.environments].sort((a, b) => ENV_ORDER[a.name] - ENV_ORDER[b.name]);
   const env = environments.find((e) => e.name === appEnv(search.env)) ?? environments[0];
   const prod = environments.find((e) => e.name === 'prod');
-  const opens = environments.filter((e) => e.url);
+  const opens = app.owner_state === 'blocked' ? [] : environments.filter((e) => e.url);
 
   return (
     <>

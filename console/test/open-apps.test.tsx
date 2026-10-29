@@ -50,6 +50,9 @@ describe('your apps (a member)', () => {
     const table = await screen.findByRole('table', { name: 'Apps you can open' });
     const [ledger, expenses] = rows(table) as [HTMLElement, HTMLElement];
     expect(within(ledger).getByText('Needs an owner').classList.contains('badge-danger')).toBe(true);
+    const dot = within(ledger).getByRole('img', { name: 'needs an owner' });
+    expect(dot.classList.contains('dot-danger')).toBe(true);
+    expect(within(expenses).getByRole('img', { name: 'active' }).classList.contains('dot-success')).toBe(true);
     expect(within(ledger).queryAllByRole('link', { name: /^Open / })).toHaveLength(0);
     expect(within(expenses).getAllByRole('link', { name: /^Open / })).toHaveLength(1);
   });
