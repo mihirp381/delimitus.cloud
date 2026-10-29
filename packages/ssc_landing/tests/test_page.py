@@ -378,7 +378,7 @@ def test_the_cost_chart_shows_four_sourced_rows() -> None:
     rows = re.findall(
         r'<div class="bars__row bars__row--(diy|dlm)" data-claim="([^"]+)">\s*'
         r'<p class="bars__l">([^<]+) <span>([^<]+)</span></p>.*?'
-        r'<p class="bars__n"[^>]*>([^<]+)</p>\s*<p class="bars__src">([^<]+)</p>',
+        r'<p class="bars__n"[^>]*>([^<]+)</p>\s*<p class="bars__src">(.*?)</p>',
         _bars(),
         flags=re.S,
     )
@@ -397,15 +397,25 @@ def test_the_cost_chart_shows_four_sourced_rows() -> None:
             "Connect company login, once",
             "about 10 h",
         ),
-        ("diy", "src-metricnet", "IT ticket", "Granting access by hand", "98 min"),
+        ("diy", "src-metricnet", "IT ticket", "A service request, done by hand", "98 min"),
     ]
     assert rows[3][:4] == ("dlm", "approve-measured", "With Delimitus", "Approve in the console")
-    sources = [r[5] for r in rows]
-    assert "François Zaninotto, Marmelab, 15 October 2026" in sources[0]
-    assert "Hours at 40 a week and 160 a person-month." in sources[0]
-    assert "commissioned by Okta, July 2026" in sources[1]
-    assert "desktop-support service request of any kind, not only access" in sources[2]
-    assert "MetricNet" in sources[2]
+    assert [r[5] for r in rows] == [
+        "Marmelab, Oct 2026 <sup>1</sup>",
+        "Forrester for Okta, Jul 2026 <sup>2</sup>",
+        "MetricNet, 2023 <sup>3</sup>",
+        "Measured by Delimitus <sup>4</sup>",
+    ]
+    notes = re.findall(r'<li data-claim="([^"]+)">([^<]+)</li>', _bars())
+    assert [n[0] for n in notes] == [r[1] for r in rows]
+    marmelab, forrester, metricnet, _ = (n[1] for n in notes)
+    assert "Marmelab blog, 15 October 2026" in marmelab
+    assert "Hours at 40 a week and 160 a person-month" in marmelab
+    assert "marmelab.com/blog/2026/10/15/building-your-own-ai-platform.html" in marmelab
+    assert "commissioned by Okta, July 2026" in forrester
+    assert "tei.forrester.com/go/Okta/IdentitySecurityFabric/index.html?lang=en-us" in forrester
+    assert "desktop-support service request of any kind, not only access" in metricnet
+    assert "brighttalk.com/resource/core/447335/" in metricnet
 
 
 def test_the_bars_are_drawn_to_their_scales() -> None:

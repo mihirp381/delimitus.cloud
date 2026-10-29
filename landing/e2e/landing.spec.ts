@@ -167,7 +167,7 @@ test('the list bursts out of the prompt and settles in place', async ({ page }) 
 const ROWS = [
   ['Build it yourself', 'Your own platform, to production grade', '240–400 h'],
   ['With Delimitus', 'Connect company login, once', 'about 10 h'],
-  ['IT ticket', 'Granting access by hand', '98 min'],
+  ['IT ticket', 'A service request, done by hand', '98 min'],
   ['With Delimitus', 'Approve in the console'],
 ];
 async function barWidths(page: Page) {
@@ -194,6 +194,8 @@ test('the chart shows four rows, each with its value and a source', async ({ pag
     await expect(row.locator('.bars__track')).toHaveAttribute('aria-hidden', 'true');
   }
   await expect(page.locator('#bars figure')).toHaveCount(2);
+  await expect(page.locator('#bars .bars__src sup')).toHaveText(['1', '2', '3', '4']);
+  await expect(page.locator('#bars .bars__notes li')).toHaveCount(4);
   await expect(page.locator('#bars figcaption').first()).toContainText('Before the first app');
   await expect(page.locator('#bars figcaption').last()).toContainText('Each request after that');
 });
