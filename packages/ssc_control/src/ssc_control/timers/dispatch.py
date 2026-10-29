@@ -35,9 +35,13 @@ class TimerCall:
     slug: str
     environment: Environment
     cell_label: str
-    """With ``slug`` and ``environment``, the app's host (``ssc_shared.hosts.app_origin``)."""
+    """With ``slug``, ``environment`` and ``apps_suffix``, the app's host (``orgs.suffix_of``)."""
     health_path: str
     """Where ``start`` asks: the manifest's ``runtime.health_path`` of the running release."""
+    apps_suffix: str | None = None
+    domain_suffix: str | None = None
+    """The org's own domain once it is active: with the default suffix, where a ``307`` may
+    send the call once more."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

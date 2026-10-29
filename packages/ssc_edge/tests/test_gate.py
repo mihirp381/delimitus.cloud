@@ -1,6 +1,8 @@
 """The gateway's decision (SSC-018): every stage, and a forbidden app answered exactly like an
 address with no app."""
 
+import html
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -32,6 +34,7 @@ from edge_world import (
 from ssc_app.identity import verify
 from ssc_edge import pages
 from ssc_edge.gate import (
+    CSP_HEADER,
     DEADLINE_HEADER,
     IDENTITY_HEADER,
     REQUEST_SECONDS,
@@ -94,7 +97,7 @@ async def test_an_allowed_request_carries_a_note_the_app_helper_accepts(world: W
     keys = jwks((world.keyring.signing_key.public_key(), world.keyring.identity_kid))
     note = verify(
         out.headers[IDENTITY_HEADER],
-        audience=f"https://{HOST}",
+        audience=PROD,
         keys=keys,
         issuer=f"https://keys.example.test/{LABEL}",
         now=NOW,
@@ -138,6 +141,61 @@ async def test_no_session_goes_to_login_whether_or_not_an_app_lives_there(world:
             "binding": [binding_of(NONCE)],
         }
         assert [v for k, v in out.headers if k == "set-cookie"] == [login_cookie(NONCE)]
+
+
+POSTED = {
+    "sec_fetch_site": "same-origin",
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+}
+
+
+def sign_in_link(out: Deny) -> str:
+    body = out.body.decode()
+    href = body.split('<a href="', 1)[1].split('"', 1)[0]
+    return html.unescape(href)
+
+
+@pytest.mark.parametrize(
+    ("referer", "back"),
+    [
+        (f"https://{HOST}/books/new?year=2026", "/books/new?year=2026"),
+        (f"https://{HOST.upper()}:443/books", "/books"),
+        (f"https://{PAY_HOST}/books", "/"),
+        (f"http://{HOST}/books", "/"),
+        (None, "/"),
+    ],
+)
+async def test_a_form_posted_after_the_session_ended_gets_a_sign_in_page(
+    world: World, referer: str | None, back: str
+) -> None:
+    extra = {"referer": referer} if referer else {}
+    out = await denied(world, facts(path="/books/save", method="POST", **POSTED, **extra))
+    assert (out.status, out.reason) == (401, "session_ended")
+    assert ("cache-control", "no-store") in out.headers
+    assert "location" not in dict(out.headers)
+    assert b"Your session ended" in out.body and b"<script" not in out.body
+    link = sign_in_link(out)
+    assert link.startswith("https://auth.example.test/login?")
+    assert parse_qs(urlsplit(link).query) == {
+        "org": [ORG],
+        "return_to": [f"https://{HOST}{back}"],
+        "binding": [binding_of(NONCE)],
+    }
+    assert [v for k, v in out.headers if k == "set-cookie"] == [login_cookie(NONCE)]
+
+
+async def test_an_expired_session_s_post_is_cleared_and_gets_the_page(world: World) -> None:
+    expired = world.cookie(session(iat=NOW - 7200, life=3600))
+    out = await denied(world, facts(method="PUT", cookie=expired, **POSTED))
+    assert (out.status, out.reason) == (401, "session_ended")
+    assert [v for k, v in out.headers if k == "set-cookie"] == [login_cookie(NONCE), clear_cookie()]
+
+
+async def test_a_post_without_fetch_metadata_or_a_get_still_goes_to_login(world: World) -> None:
+    for f in (facts(method="POST"), facts(**POSTED), facts(method="HEAD", **POSTED)):
+        out = await denied(world, f)
+        assert (out.status, out.reason) == (302, "no_session")
 
 
 @pytest.mark.parametrize(
@@ -192,6 +250,144 @@ async def test_only_a_check_that_reaches_the_snapshot_refreshes_it(world: World)
     assert refreshed == [world.now]
 
 
+CUSTOM = "tools.testorg.com"
+RETIRED = [{"suffix": "old.testorg.com", "until": "2026-12-01T00:00:00Z"}]
+
+
+async def test_the_snapshot_suffix_names_the_hosts(world: World) -> None:
+    world.view = AccessView.from_document(snapshot(suffix=CUSTOM, previous_suffixes=RETIRED))
+    host = f"ledger.{CUSTOM}"
+    out = await check(world, facts(host, cookie=world.cookie(session(), host)))
+    assert isinstance(out, Allow)
+    assert out.host == host
+    for elsewhere in (HOST, "ledger.tools.otherorg.com", "a.ledger.old.testorg.com"):
+        out = await denied(world, facts(elsewhere, cookie=world.cookie(session(), elsewhere)))
+        assert (out.status, out.reason) == (404, "not_app_host")
+    old = "ledger.old.testorg.com"
+    out = await denied(world, facts(old, cookie=world.cookie(session(), old)))
+    assert (out.status, out.reason) == (307, "previous_suffix")
+
+
+def moved_to(out: Deny) -> str:
+    assert (out.status, out.reason, out.body) == (307, "previous_suffix", b"")
+    headers = dict(out.headers)
+    assert set(headers) == {"location", "cache-control"}
+    assert headers["cache-control"] == "no-store"
+    return headers["location"]
+
+
+@pytest.mark.parametrize(
+    ("host", "path", "want"),
+    [
+        ("ledger.old.testorg.com", "/", f"https://ledger.{CUSTOM}/"),
+        (
+            "ledger.old.testorg.com",
+            "/report/2026?q=a%20b&tab=2#x",
+            f"https://ledger.{CUSTOM}/report/2026?q=a%20b&tab=2#x",
+        ),
+        ("ledger--preview.old.testorg.com", "/p?x=1", f"https://ledger--preview.{CUSTOM}/p?x=1"),
+        ("LEDGER.Old.TestOrg.com:443", "/a", f"https://ledger.{CUSTOM}/a"),
+        ("nothere.old.testorg.com", "/", f"https://nothere.{CUSTOM}/"),
+        ("ledger.old.testorg.com", "//evil.example/x", f"https://ledger.{CUSTOM}//evil.example/x"),
+    ],
+)
+async def test_a_previous_suffix_redirects_to_the_current_one(
+    world: World, host: str, path: str, want: str
+) -> None:
+    world.view = AccessView.from_document(snapshot(suffix=CUSTOM, previous_suffixes=RETIRED))
+    assert moved_to(await denied(world, facts(host, path))) == want
+
+
+async def test_the_redirect_comes_before_any_session_or_timer_work(world: World) -> None:
+    world.view = AccessView.from_document(snapshot(suffix=CUSTOM, previous_suffixes=RETIRED))
+    old = "ledger.old.testorg.com"
+    want = f"https://ledger.{CUSTOM}/x"
+    for f in (
+        facts(old, "/x", cookie=world.cookie(session(), old)),
+        facts(old, "/x", cookie="__Host-ssc-session=garbage"),
+        facts(old, "/x", "POST", sec_fetch_site="cross-site"),
+        facts(old, "/x", ssc_schedule_token="not-a-token"),
+    ):
+        assert moved_to(await denied(world, f)) == want
+
+
+async def test_a_previous_suffix_is_not_found_after_its_until(world: World) -> None:
+    until = int(datetime.fromisoformat(RETIRED[0]["until"]).timestamp())
+    world.view = AccessView.from_document(snapshot(suffix=CUSTOM, previous_suffixes=RETIRED))
+    for host in ("ledger.old.testorg.com", "ledger--preview.old.testorg.com"):
+        world.now = until - 1
+        assert (await denied(world, facts(host))).status == 307
+        world.now = until
+        out = await denied(world, facts(host))
+        assert (out.status, out.reason) == (404, "not_app_host")
+
+
+async def test_a_flip_and_a_flip_back_never_loop(world: World) -> None:
+    default = f"{LABEL}.{DOMAIN}"
+    t0 = NOW
+    month = 30 * 86400
+
+    def iso(t: int) -> str:
+        return datetime.fromtimestamp(t, UTC).isoformat()
+
+    flipped = snapshot(
+        2, suffix=CUSTOM, previous_suffixes=[{"suffix": default, "until": iso(t0 + month)}]
+    )
+    back = snapshot(
+        3, suffix=None, previous_suffixes=[{"suffix": CUSTOM, "until": iso(t0 + 86400 + month)}]
+    )
+    for doc, at in ((flipped, t0), (back, t0 + 86400), (back, t0 + 86400 + month + 1)):
+        world.view = AccessView.from_document(doc)
+        world.now = at
+        for first in ("ledger", "ledger--preview"):
+            for suffix in (default, CUSTOM):
+                host, hops = f"{first}.{suffix}", 0
+                while True:
+                    out = await check(world, facts(host, cookie=world.cookie(session(), host)))
+                    if not (isinstance(out, Deny) and out.status == 307):
+                        break
+                    hops += 1
+                    assert hops == 1, f"{host} redirected again"
+                    host = urlsplit(moved_to(out)).hostname or ""
+                    assert host.endswith(doc["suffix"] or default)
+
+
+async def test_the_note_names_the_environment_under_any_suffix(world: World) -> None:
+    keys = jwks((world.keyring.signing_key.public_key(), world.keyring.identity_kid))
+    issuer = f"https://keys.example.test/{LABEL}"
+    host = f"ledger.{CUSTOM}"
+    before = await check(world, facts(cookie=world.cookie()))
+    world.view = AccessView.from_document(snapshot(2, suffix=CUSTOM))
+    after = await check(world, facts(host, cookie=world.cookie(session(), host)))
+    for out in (before, after):
+        assert isinstance(out, Allow)
+        note = verify(
+            out.headers[IDENTITY_HEADER], audience=PROD, keys=keys, issuer=issuer, now=NOW
+        )
+        assert note.aud == PROD
+
+
+async def test_a_new_suffix_is_served_after_one_read_without_a_restart(world: World) -> None:
+    refreshed: list[int] = []
+
+    async def refresh() -> None:
+        refreshed.append(world.now)
+        world.view = AccessView.from_document(snapshot(2, suffix=CUSTOM))
+
+    gate = gate_for(
+        config(), world.keyring, view=lambda: world.view, clock=lambda: world.now, refresh=refresh
+    )
+    stray = "nothere.tools.testorg.com"
+    assert (await gate.check(facts(stray, cookie=world.cookie(session(), stray)))).status == 404
+    assert refreshed == []
+    host = f"ledger.{CUSTOM}"
+    assert isinstance(await gate.check(facts(host, cookie=world.cookie(session(), host))), Allow)
+    assert refreshed[0] == world.now
+    gone = await gate.check(facts(HOST, cookie=world.cookie()))
+    assert isinstance(gone, Deny)
+    assert (gone.status, gone.reason) == (404, "not_app_host")
+
+
 async def test_a_host_label_pointing_at_the_wrong_environment_is_not_found(world: World) -> None:
     world.view = AccessView.from_document(snapshot(hosts={"ledger--preview": PROD}))
     out = await denied(world, facts(PREVIEW_HOST, cookie=world.cookie(session(), PREVIEW_HOST)))
@@ -225,6 +421,15 @@ async def test_a_host_label_pointing_at_the_wrong_environment_is_not_found(world
             False,
         ),
         ("GET", {"sec_fetch_site": "same-site", "sec_fetch_mode": "cors"}, False),  # another app
+        (
+            "POST",
+            {
+                "sec_fetch_site": "same-site",
+                "sec_fetch_mode": "navigate",
+                "sec_fetch_dest": "document",
+            },
+            False,
+        ),  # a form on another app that names this one in its form-action
         (
             "GET",
             {
@@ -359,6 +564,9 @@ async def test_a_session_from_before_a_revocation_is_sent_back_to_login(world: W
     assert cookies == [login_cookie(NONCE), clear_cookie()]
     later = session(iat=NOW - 300)
     assert isinstance(await check(world, facts(cookie=world.cookie(later))), Allow)
+    posted = await denied(world, facts(method="POST", cookie=world.cookie(s), **POSTED))
+    assert (posted.status, posted.reason) == (401, "revoked")
+    assert b"Your session ended" in posted.body
 
 
 async def test_logout_clears_the_session_only_from_the_app_itself(world: World) -> None:
@@ -425,6 +633,42 @@ async def test_the_deadline_is_the_lower_of_the_gateway_and_the_environment(
     assert out.headers[DEADLINE_HEADER] == str(NOW + told)
 
 
+POLICY = "form-action 'self' https://auth.example.test; frame-ancestors 'self'"
+
+
+@pytest.mark.parametrize("member", [{}, {"form_targets": None}], ids=["absent", "null"])
+async def test_every_allowed_request_gets_the_form_and_frame_policy(
+    world: World, member: dict[str, Any]
+) -> None:
+    world.view = AccessView.from_document(snapshot(2, **member))
+    out = await check(world, facts(cookie=world.cookie()))
+    assert isinstance(out, Allow)
+    assert out.client_headers == ((CSP_HEADER, POLICY),)
+
+
+async def test_an_environment_s_form_targets_join_its_form_action(world: World) -> None:
+    targets = ["https://pay.example.com", "https://sso.testorg.com"]
+    world.view = AccessView.from_document(snapshot(2, form_targets={PROD: targets}))
+    out = await check(world, facts(cookie=world.cookie()))
+    assert isinstance(out, Allow)
+    assert dict(out.client_headers)[CSP_HEADER] == (
+        "form-action 'self' https://auth.example.test https://pay.example.com "
+        "https://sso.testorg.com; frame-ancestors 'self'"
+    )
+    preview = await check(
+        world, facts(PREVIEW_HOST, cookie=world.cookie(session(ADA), PREVIEW_HOST))
+    )
+    assert isinstance(preview, Allow)
+    assert dict(preview.client_headers)[CSP_HEADER] == POLICY
+
+
+async def test_a_refusal_carries_no_form_policy(world: World) -> None:
+    out = await denied(world, facts(PAY_HOST, cookie=world.cookie(session(BEN), PAY_HOST)))
+    assert CSP_HEADER not in dict(out.headers)
+    login = await denied(world, facts())
+    assert CSP_HEADER not in dict(login.headers)
+
+
 PAGE_LOAD = {
     "sec_fetch_site": "none",
     "sec_fetch_mode": "navigate",
@@ -439,7 +683,7 @@ async def test_a_page_load_is_marked_for_the_waking_page_and_gets_the_cookie(
     out = await check(world, facts(cookie=world.cookie(), **PAGE_LOAD))
     assert isinstance(out, Allow)
     assert out.headers[WAKE_HEADER] == "1"
-    assert out.client_headers == (("set-cookie", wake_cookie()),)
+    assert out.client_headers == ((CSP_HEADER, POLICY), ("set-cookie", wake_cookie()))
     assert wake_cookie() == (
         f"{WAKE_COOKIE}=1; Path=/; Max-Age=120; Secure; HttpOnly; SameSite=Lax"
     )
@@ -468,7 +712,7 @@ async def test_nothing_else_is_marked(world: World, method: str, changes: dict[s
     out = await check(world, facts(method=method, cookie=cookie, **headers))
     assert isinstance(out, Allow), out
     assert WAKE_HEADER not in out.headers
-    assert out.client_headers == ()
+    assert out.client_headers == ((CSP_HEADER, POLICY),)
 
 
 async def test_a_refused_page_load_is_never_marked(world: World) -> None:

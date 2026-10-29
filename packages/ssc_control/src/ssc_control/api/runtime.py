@@ -4,6 +4,7 @@ org's cell (its secret grants, app databases, logs and egress proxy) and the Git
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,7 @@ from ssc_control.ports import (
 )
 from ssc_control.runtime.cell_datagw import SchemaCache
 from ssc_control.runtime.cells import CellPorts, CellUnavailableError, OrgCell
+from ssc_control.runtime.specs import BundleReleaseSpecs, ReleaseSpecs
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -30,6 +32,7 @@ if TYPE_CHECKING:
     from ssc_control.api.auth import Verifier
     from ssc_control.api.ratelimit import RateLimiter
     from ssc_control.api.settings import Settings
+    from ssc_control.domains.probe import Resolver
     from ssc_control.github.client import GitHubApp
     from ssc_control.storage import CellStores
     from ssc_shared.blobstore import BlobStore
@@ -65,6 +68,9 @@ class Runtime:
     schema_cache: SchemaCache = field(default_factory=SchemaCache)
     """Connections' tables and columns as the data gateway last showed them, for five minutes
     (GA-5.8)."""
+    resolvers: Mapping[str, Resolver] = field(default_factory=dict[str, "Resolver"])
+    """The public resolvers a customer domain's parent NS is read through (CD-4)."""
+    release_specs: ReleaseSpecs = field(default_factory=BundleReleaseSpecs)
 
 
 async def cell_of(request: Request, org_id: str) -> OrgCell | None:

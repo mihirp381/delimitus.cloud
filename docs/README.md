@@ -39,6 +39,7 @@ checks, use [CONTRIBUTING.md](../CONTRIBUTING.md); for code navigation, use the
 | [Infrastructure](../infra/README.md) | Platform and cell stacks, networking, lazy resources, and live checks. |
 | [Control plane deployment](runbooks/ssc-064-control-plane.md) | Production setup, secrets, migrations, and release checks. |
 | [Customer onboarding](runbooks/ssc-110-onboarding.md) | Onboard a customer: the cell, the WorkOS setup, waiting reasons, and abandon. |
+| [Customer domain proof](runbooks/ssc-111-customer-domain-proof.md) | Delegate a test domain, time each state, flip, flip back and re-flip, then seven green nights of the suffix walk. |
 | [Login rig](runbooks/ssc-019-login.md) | Local SSO and directory checks with WorkOS staging tenants. |
 | [Approval email](runbooks/ssc-049-approval-email.md) | Configure delivery, diagnose failures, and rotate credentials. |
 | [Database restore](runbooks/ssc-043-restore-database.md) | Restore an app database from a point-in-time clone. |
@@ -46,6 +47,8 @@ checks, use [CONTRIBUTING.md](../CONTRIBUTING.md); for code navigation, use the
 | [Support and on call](runbooks/ssc-062-support-and-on-call.md) | Alerts, diagnosis, escalation, and status notes. |
 | [Cost reconciliation](runbooks/ssc-096-cost-reconciliation.md) | Compare usage records with cloud billing. |
 | [Kill switch drill](kill-switch-drill.md) | Measure app shutdown and revocation. |
+| [Public Suffix List refresh](../tools/psl_refresh.py) | `uv run python tools/psl_refresh.py` rewrites the vendored list (ICANN section) that suffix admission reads; `test_psl.py` fails once it is 90 days old. Vendored 2026-10-22: refresh before 2027-01-20. |
+| [Customer domain zone](plans/custom-domains-2026-10-26.md) | Never delete a customer zone: a retire empties it and keeps it, so a parent NS record left behind points at a zone we hold rather than one anyone could recreate on the same servers (dangling-delegation takeover). The zone goes only with its cell project, and cell destroy refuses while the org's domain is not retired or the resolvers still see its delegation. |
 
 ## Known limits
 
@@ -59,6 +62,9 @@ feature or making a product claim.
 - [Builds](trust/build-limits.md): build network access and secret scanning limits.
 - [AI agents](trust/agent-limits.md): what an agent credential can and cannot do, what the
   adversarial matrix and the live sweep check, and the gaps they found.
+- [Your own address](trust/domain-limits.md): what we run in a subdomain you delegate, mail
+  records, certificate transparency, cookies and forms, the 30-day redirect, the one sign-in after
+  a move, and how long the zone is kept.
 
 ## Product surfaces, testing, and pilot
 

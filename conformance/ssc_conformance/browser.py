@@ -31,7 +31,9 @@ GROUPS: Final = {
     "login sessions": matrix.BROWSER_LOGIN,
     "two cells": matrix.BROWSER_CROSS_CELL,
 }
-RIG_ONLY: Final = frozenset({"fail closed", "the nightly sign-in"})
+RIG_ONLY: Final = frozenset(
+    {"fail closed", "the nightly sign-in", "form targets and ended sessions"}
+)
 _FAILED: Final = ("unexpected", "flaky")
 
 

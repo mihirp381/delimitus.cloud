@@ -3,7 +3,12 @@ login-code redemption, so every rule is tested without Envoy.
 
 Stages, in order, stopping at the first refusal:
 
-1. Host: lower-cased, port dropped. A host that is not an app host of this cell is ``404``.
+1. Host: lower-cased, port dropped. A host that is not an app host under the org's suffix (the
+   snapshot's ``suffix``, else ``<cell label>.<apps domain>``) is ``404``. A host whose first
+   label is in the snapshot's ``hosts`` but which is not under that suffix is looked up again
+   after a snapshot read, so a new suffix is served without a restart. A host under one of the
+   snapshot's ``previous_suffixes`` answers ``307`` to the same first label under the current
+   suffix, path and query kept, before any session work; after its ``until``, ``404``.
 2. Own paths under ``/.ssc/``: the login hand-back (``/.ssc/callback``) and ``/.ssc/logout``.
    Apps never receive these paths. The hand-back redeems the code with the login nonce this
    host set when it sent the browser to log in, so a code is good only in that browser.
@@ -12,7 +17,10 @@ Stages, in order, stopping at the first refusal:
    ``403``; a WebSocket upgrade whose ``Origin`` is not the app's own origin is ``403`` (compared
    as an origin: scheme and host in any case, ``:443`` written or not).
 4. Session: no valid session cookie for this host is a redirect to login, whether or not an app
-   lives at the host. The redirect sets a fresh login nonce cookie and sends its SHA-256.
+   lives at the host. The redirect sets a fresh login nonce cookie and sends its SHA-256. A
+   browser's request that is not a ``GET``/``HEAD`` (a form post whose session ended) gets
+   ``401`` and a page linking to that login instead, returning to the page it came from
+   (``Referer`` on this host, else ``/``), never to the post's target.
    A request carrying a schedule token (``SSC-Schedule-Token``, SSC-041) is a timer call
    instead: it needs no session and goes to :meth:`Gate._timer`, which never redirects to login
    and never marks the request for the "waking up" page, so the call waits for the app or fails
@@ -22,12 +30,15 @@ Stages, in order, stopping at the first refusal:
    SSC-019) is a redirect to login with the cookie cleared.
 7. Environment and sharing rule (``ssc_shared.access.decide``): an unknown host label and any
    refusal are the same ``404`` page.
-8. Allowed: the identity note is minted, and the request goes to the environment's service with
-   the time Cloud Run will end it (``X-SSC-Request-Deadline``). A browser page load without the
-   wake cookie is marked for the "waking up" page (``ssc_edge.envoy``). A WebSocket, an event
-   stream and every other request that is not a page or a static file (:func:`relayed`) is
-   admitted to the stream relay (``ssc_edge.streams``), which asks :meth:`Gate.holds` again
-   while it is open. A timer call is never relayed.
+8. Allowed: the identity note is minted for the environment id, and the request goes to the
+   environment's service with the time Cloud Run will end it (``X-SSC-Request-Deadline``). The
+   browser's answer gets ``Content-Security-Policy: form-action 'self' <auth_url>
+   <form_targets>; frame-ancestors 'self'`` (CD-5.2) beside any policy of the app's; the auth
+   origin is there for ``/.ssc/logout``, whose redirect ``form-action`` also covers. A
+   browser page load without the wake cookie is marked for the "waking up" page
+   (``ssc_edge.envoy``). A WebSocket, an event stream and every other request that is not a page
+   or a static file (:func:`relayed`) is admitted to the stream relay (``ssc_edge.streams``),
+   which asks :meth:`Gate.holds` again while it is open. A timer call is never relayed.
 
 A refusal never names the reason to the caller; ``Deny.reason`` is for the gateway's own log.
 """
@@ -35,7 +46,7 @@ A refusal never names the reason to the caller; ``Deny.reason`` is for the gatew
 import base64
 import hashlib
 import secrets
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, Protocol
@@ -61,7 +72,7 @@ from ssc_edge.session import (
     wake_cookie,
 )
 from ssc_shared.access import AccessView, EnvironmentIndex, decide
-from ssc_shared.hosts import AppHost, parse_app_host
+from ssc_shared.hosts import AppHost, default_suffix, parse_app_host
 from ssc_shared.runtime import MAX_TIMEOUT_SECONDS, service_name
 
 OWN_PREFIX: Final = "/.ssc/"
@@ -80,6 +91,7 @@ removes it before forwarding."""
 STREAM_HEADER: Final = "x-ssc-stream"
 """Internal: the stream relay's ticket for a WebSocket or an event stream (``ssc_edge.streams``).
 Envoy sends a request carrying it to the relay, which removes it."""
+CSP_HEADER: Final = "content-security-policy"
 SCHEDULE_HEADER: Final = SCHEDULE_TOKEN_HEADER.lower()
 """A timer call's schedule token. The check reads it and Envoy removes it before forwarding."""
 REQUEST_SECONDS: Final = MAX_TIMEOUT_SECONDS
@@ -101,6 +113,8 @@ type Reason = Literal[
     "signed_out",
     "bad_schedule_token",
     "app_inactive",
+    "previous_suffix",
+    "session_ended",
 ]
 
 
@@ -169,6 +183,10 @@ def new_nonce() -> str:
 def upstream_host(environment_id: str, *, project_number: str, region: str) -> str:
     """The deterministic ``run.app`` host of the environment's Cloud Run service (decision 014)."""
     return f"{service_name(environment_id)}-{project_number}.{region}.run.app"
+
+
+def form_policy(auth_url: str, targets: Iterable[str]) -> str:
+    return " ".join(("form-action 'self'", auth_url, *targets)) + "; frame-ancestors 'self'"
 
 
 def page_load(facts: Facts) -> bool:
@@ -256,6 +274,20 @@ def _local_path(raw: str | None) -> str:
     return raw
 
 
+def _referer_path(referer: str | None, host: str) -> str:
+    """The path and query of a ``Referer`` on ``host`` itself, else ``/``."""
+    try:
+        parts = urlsplit(referer or "")
+        port = parts.port
+    except ValueError:
+        return "/"
+    if parts.scheme != "https" or port not in (None, 443) or "@" in parts.netloc:
+        return "/"
+    if normal_host(parts.netloc) != host:
+        return "/"
+    return _local_path(parts.path + (f"?{parts.query}" if parts.query else ""))
+
+
 class Gate:
     def __init__(  # noqa: PLR0913  (keyword-only collaborators)
         self,
@@ -282,11 +314,53 @@ class Gate:
         self._refresh = refresh
         self._schedule_keys = schedule_keys
 
+    def _parse(self, host: str) -> tuple[AppHost | None, str, AccessView | None]:
+        view = self._view()
+        current = (view.suffix if view else None) or default_suffix(
+            self._cfg.cell_label, self._cfg.apps_domain
+        )
+        previous = [p.suffix for p in view.previous_suffixes] if view else []
+        return parse_app_host(host, [current, *previous]), current, view
+
+    def _app(self, host: str) -> AppHost | None:
+        app, current, _ = self._parse(host)
+        return app if app is not None and app.suffix == current else None
+
+    def _moved(self, host: str, path: str) -> Deny | None:
+        app, current, view = self._parse(host)
+        if app is None or app.suffix == current or view is None:
+            return None
+        now = self._clock()
+        if not any(
+            p.suffix == app.suffix and p.until.timestamp() > now for p in view.previous_suffixes
+        ):
+            return None
+        first = host.removesuffix("." + app.suffix)
+        local = path if path.startswith("/") else "/"
+        return Deny(
+            status=307,
+            headers=(
+                ("location", f"https://{first}.{current}{local}"),
+                ("cache-control", "no-store"),
+            ),
+            body=b"",
+            reason="previous_suffix",
+        )
+
     async def check(self, facts: Facts) -> Allow | Deny:
         host = normal_host(facts.host)
-        app = parse_app_host(host, self._cfg.apps_domain)
-        if app is None or app.cell_label != self._cfg.cell_label:
-            return not_found("not_app_host")
+        app = self._app(host)
+        view = self._view()
+        if (
+            app is None
+            and self._refresh is not None
+            and view
+            and host.split(".", 1)[0] in view.hosts
+        ):
+            await self._refresh()
+            app = self._app(host)
+        if app is None:
+            return self._moved(host, facts.path or "/") or not_found("not_app_host")
         path = facts.path or "/"
         own = urlsplit(path).path
         if own.startswith(OWN_PREFIX):
@@ -299,7 +373,7 @@ class Gate:
             return await self._timer(token, host, path, app, facts)
         session, presented = self._session(facts, host)
         if session is None:
-            return self._login(host, path, cleared=presented)
+            return self._login(host, path, facts, cleared=presented)
         if self._refresh is not None:
             await self._refresh()
         return self._decide(host, path, app, session, facts)
@@ -331,7 +405,18 @@ class Gate:
                 return session, True
         return None, bool(values)
 
-    def _login(self, host: str, path: str, *, cleared: bool, reason: Reason = "no_session") -> Deny:
+    def _login(  # noqa: PLR0913  (one request's parts)
+        self,
+        host: str,
+        path: str,
+        facts: Facts,
+        *,
+        cleared: bool,
+        reason: Reason = "no_session",
+    ) -> Deny:
+        posted = facts.method not in SAFE_METHODS and "sec-fetch-mode" in facts.headers
+        if posted:
+            path = _referer_path(facts.headers.get("referer"), host)
         nonce = self._nonce()
         query = urlencode(
             {
@@ -340,10 +425,14 @@ class Gate:
                 "binding": binding_of(nonce),
             }
         )
+        login = f"{self._cfg.auth_url}/login?{query}"
         extra = [("set-cookie", login_cookie(nonce))]
         if cleared:
             extra.append(("set-cookie", clear_cookie()))
-        return _redirect(f"{self._cfg.auth_url}/login?{query}", reason, *extra)
+        if posted:
+            ended: Reason = "session_ended" if reason == "no_session" else reason
+            return _page(401, pages.session_ended(login), ended, *extra)
+        return _redirect(login, reason, *extra)
 
     async def _own(self, own: str, path: str, host: str, facts: Facts) -> Deny:
         if own == CALLBACK_PATH and facts.method in SAFE_METHODS:
@@ -394,7 +483,7 @@ class Gate:
         """Whether an open stream admitted as ``allowed`` would be admitted now: the same
         stages against the view the gate holds now, and the session not yet expired."""
         view, session = self._view(), allowed.session
-        app = parse_app_host(allowed.host, self._cfg.apps_domain)
+        app = self._app(allowed.host)
         if view is None or session is None or app is None or self._clock() >= session.exp:
             return False
         return not isinstance(self._admit(view, allowed.host, app, session), str)
@@ -407,7 +496,7 @@ class Gate:
             return _page(503, pages.UNAVAILABLE, "no_view")
         admitted = self._admit(view, host, app, session)
         if admitted == "revoked":
-            return self._login(host, path, cleared=True, reason="revoked")
+            return self._login(host, path, facts, cleared=True, reason="revoked")
         if isinstance(admitted, str):
             return not_found(admitted)
         env_id, env, role = admitted
@@ -416,7 +505,7 @@ class Gate:
         now = self._clock()
         note = compose_note(
             issuer=self._cfg.issuer,
-            audience=f"https://{host}",
+            audience=env_id,
             subject=session.sub,
             org=self._cfg.org_id,
             app=env.app_id,
@@ -428,10 +517,12 @@ class Gate:
             email=session.email or None,
         )
         upstream, headers = self._forward(env_id, env, note, now)
-        client: tuple[tuple[str, str], ...] = ()
+        client: tuple[tuple[str, str], ...] = (
+            (CSP_HEADER, form_policy(self._cfg.auth_url, view.form_targets.get(env_id, ()))),
+        )
         if page_load(facts) and not cookie_values(facts.headers.get("cookie", ""), WAKE_COOKIE):
             headers[WAKE_HEADER] = "1"
-            client = (("set-cookie", wake_cookie()),)
+            client = (*client, ("set-cookie", wake_cookie()))
         return Allow(
             upstream=upstream,
             headers=MappingProxyType(headers),
@@ -490,7 +581,7 @@ class Gate:
         now = self._clock()
         note = compose_note(
             issuer=self._cfg.issuer,
-            audience=f"https://{host}",
+            audience=claims.env,
             subject=claims.sub,
             org=self._cfg.org_id,
             app=env.app_id,

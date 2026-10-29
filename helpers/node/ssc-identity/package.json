@@ -1,6 +1,6 @@
 {
   "name": "@delimitus/ssc-identity",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Read the identity note the SSC gateway attaches to every request (X-SSC-Identity). Zero dependencies.",
   "type": "module",
   "main": "./index.js",

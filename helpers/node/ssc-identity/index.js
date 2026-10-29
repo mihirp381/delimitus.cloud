@@ -3,7 +3,7 @@
  *
  *   import { IdentityVerifier } from '@delimitus/ssc-identity';
  *   const verifier = new IdentityVerifier({
- *     audience: process.env.SSC_APP_ORIGIN,
+ *     audience: process.env.SSC_APP_ENV_ID,
  *     keys: process.env.SSC_IDENTITY_KEYS_URL,
  *   });
  *   const note = await verifier.fromHeaders(req.headers);
@@ -17,8 +17,8 @@
  *    stream: the note expires after five minutes and ending open streams is the platform kill
  *    switch's job. Re-verifying mid-stream only breaks the stream.
  *
- * In a cell the platform hands the app its origin in `SSC_APP_ORIGIN` and the cell JWKS inline, as
- * a `data:` URL, in `SSC_IDENTITY_KEYS_URL`. Outside a cell, `keys` may be the JWKS URL
+ * In a cell the platform hands the app its environment id in `SSC_APP_ENV_ID` and the cell JWKS
+ * inline, as a `data:` URL, in `SSC_IDENTITY_KEYS_URL`. Outside a cell, `keys` may be the JWKS URL
  * (`https://keys.delimitus.com/<cell>/jwks.json`) or the JWKS itself.
  *
  * Every refusal is an `IdentityRefused` with a `code` from `REFUSAL_CODES`. Treat them all the
@@ -66,7 +66,7 @@ export class IdentityRefused extends Error {
 
 const RE = {
   iss: /^https:\/\/[a-z0-9.-]+\/[a-z0-9-]+$/,
-  aud: /^https:\/\/[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?$/,
+  aud: /^env_[a-z0-9]{20}$/,
   sub: /^(usr|sch)_[a-z0-9]{20}$/,
   org: /^org_[a-z0-9]{20}$/,
   app: /^app_[a-z0-9]{20}$/,
@@ -227,7 +227,7 @@ export function validateNote(c) {
   for (const k of Object.keys(c)) if (!CLAIMS.has(k)) bad(`unknown claim '${k}'`);
   for (const k of ['iss', 'aud', 'sub', 'org', 'app', 'env', 'role']) if (typeof c[k] !== 'string') bad(`${k} missing or not a string`);
   if (!RE.iss.test(c.iss)) bad('iss is not a cell issuer');
-  if (!RE.aud.test(c.aud)) bad('aud is not an origin');
+  if (!RE.aud.test(c.aud)) bad('aud is not an environment id');
   if (!RE.sub.test(c.sub)) bad('sub is not a usr_ or sch_ id');
   if (!RE.org.test(c.org)) bad('org is not an org_ id');
   if (!RE.app.test(c.app)) bad('app is not an app_ id');
@@ -275,7 +275,7 @@ export function tokenFromHeaders(headers) {
 export class IdentityVerifier {
   #keys;
   constructor({ audience, keys, issuer, leeway = DEFAULT_LEEWAY_SECONDS }) {
-    if (typeof audience !== 'string') throw new TypeError('audience is required: this app\'s exact origin');
+    if (typeof audience !== 'string') throw new TypeError('audience is required: this app environment\'s id');
     this.audience = audience;
     this.issuer = issuer;
     this.leeway = leeway;

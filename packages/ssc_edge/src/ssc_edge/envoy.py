@@ -8,11 +8,13 @@ Filters, in order:
    copies ``Content-Length`` for the check.
 3. ``ext_authz`` (HTTP) to ``ssc_edge.server`` on loopback. Fails closed: an unreachable, slow
    or failing service is ``503``. Its answer may mark a browser page load (``x-ssc-wake``), which
-   then takes the wake route, and may add the wake cookie to the browser's answer.
+   then takes the wake route, and adds the form and frame policy and may add the wake cookie
+   to the browser's answer.
 4. ``route`` (Lua): moves the request to the service host the check named, keeps the app host
    in ``X-Forwarded-Host``, drops a timer call's schedule token and drops platform cookies from
    ``Cookie``. On the response, and only for responses from an app, drops ``Set-Cookie`` values
-   that use a platform name.
+   that use a platform name or carry a ``Domain`` attribute (CD-5.1), logging how many of the
+   latter it dropped.
 5. ``dynamic_forward_proxy`` and ``router``: forwards to that host over TLS, the name checked.
 
 Routes: a request the check admitted to the relay (a WebSocket, an event stream, and any other
@@ -36,6 +38,7 @@ from typing import Any, Final
 
 from ssc_edge import pages
 from ssc_edge.gate import (
+    CSP_HEADER,
     DEADLINE_HEADER,
     IDENTITY_HEADER,
     SCHEDULE_HEADER,
@@ -52,6 +55,7 @@ ALLOWED_HEADERS: Final = (
     "accept",
     "cookie",
     "origin",
+    "referer",
     "upgrade",
     "sec-fetch-site",
     "sec-fetch-mode",
@@ -68,8 +72,9 @@ UPSTREAM_HEADERS: Final = (
     STREAM_HEADER,
     SERVERLESS_AUTH,
 )
-ON_SUCCESS_CLIENT_HEADERS: Final = ("set-cookie",)
-"""Headers an allowing answer adds to the browser's response: the wake cookie only."""
+ON_SUCCESS_CLIENT_HEADERS: Final = ("set-cookie", CSP_HEADER)
+"""Headers an allowing answer adds to the browser's response: the wake cookie and the form and
+frame policy."""
 WAKE_SECONDS: Final = 2
 
 _T = "type.googleapis.com/envoy.extensions."
@@ -130,13 +135,19 @@ function envoy_on_response(h)
   local n = hs:getNumValues("set-cookie")
   if n == 0 then return end
   local keep = {{}}
+  local wide = 0
   for i = 0, n - 1 do
     local v = hs:getAtIndex("set-cookie", i)
     local name = string.match(v, "^%s*([^=;%s]*)") or ""
-    if not platform(name) then table.insert(keep, v) end
+    if string.find(string.lower(v), ";%s*domain%s*=") then
+      wide = wide + 1
+    elseif not platform(name) then
+      table.insert(keep, v)
+    end
   end
   hs:remove("set-cookie")
   for _, v in ipairs(keep) do hs:add("set-cookie", v) end
+  if wide > 0 then h:logInfo("ssc: dropped " .. wide .. " set-cookie with Domain=") end
 end
 """
 

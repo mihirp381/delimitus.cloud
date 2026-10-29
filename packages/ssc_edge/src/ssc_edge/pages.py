@@ -1,7 +1,8 @@
-"""The gateway's own answers. Each is one constant, so two refusals of one kind are identical
+"""The gateway's own answers. Each refusal is one constant, so two of one kind are identical
 byte for byte: an app the caller may not reach is answered exactly like a host that does not
 exist (SSC-018 done-when)."""
 
+from html import escape
 from typing import Final
 
 HEADERS: Final = (
@@ -40,3 +41,11 @@ WAKING: Final = _page(
     f"<meta http-equiv=refresh content={WAKE_RETRY_SECONDS}>",
 )
 """A browser page load that the app has not answered within 2 seconds (``ssc_edge.envoy``)."""
+
+
+def session_ended(login: str) -> bytes:
+    """A form posted after the session ended: what was posted is not sent on."""
+    return _page(
+        "Your session ended",
+        f'Nothing was sent. <a href="{escape(login)}">Sign in again</a>, then send it once more.',
+    )

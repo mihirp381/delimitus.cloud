@@ -468,6 +468,29 @@
         "title": "AppList",
         "type": "object"
       },
+      "AppMoveOut": {
+        "additionalProperties": false,
+        "properties": {
+          "hosts": {
+            "description": "Its prod and preview hosts under the coming suffix.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Hosts",
+            "type": "array"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "hosts"
+        ],
+        "title": "AppMoveOut",
+        "type": "object"
+      },
       "AppOut": {
         "additionalProperties": false,
         "properties": {
@@ -1480,6 +1503,12 @@
           "invite.created",
           "invite.revoked",
           "invite.used",
+          "domain.requested",
+          "domain.active",
+          "domain.failed",
+          "domain.flipped",
+          "domain.retired",
+          "domain.delegated",
           "github.installation_bound",
           "repo.connected",
           "repo.disconnected"
@@ -3354,6 +3383,116 @@
         "title": "DecisionIn",
         "type": "object"
       },
+      "DelegationOut": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_delegated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Delegated At"
+          },
+          "name_servers": {
+            "description": "The NS records to add at the parent zone.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Name Servers",
+            "type": "array"
+          },
+          "observed_ns": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What each public resolver last answered for the suffix's NS.",
+            "title": "Observed Ns"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where the parent zone is hosted, when known.",
+            "title": "Provider"
+          },
+          "state": {
+            "enum": [
+              "pending_dns",
+              "issuing",
+              "active",
+              "failed",
+              "retiring",
+              "retired"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "suffix": {
+            "title": "Suffix",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "suffix",
+          "state",
+          "name_servers",
+          "observed_ns",
+          "failure",
+          "provider",
+          "created_at",
+          "updated_at",
+          "last_delegated_at"
+        ],
+        "title": "DelegationOut",
+        "type": "object"
+      },
       "DeploymentCreate": {
         "additionalProperties": false,
         "properties": {
@@ -3745,6 +3884,80 @@
         "title": "DirectoryUserOut",
         "type": "object"
       },
+      "DomainIn": {
+        "additionalProperties": false,
+        "properties": {
+          "suffix": {
+            "maxLength": 203,
+            "minLength": 1,
+            "title": "Suffix",
+            "type": "string"
+          }
+        },
+        "required": [
+          "suffix"
+        ],
+        "title": "DomainIn",
+        "type": "object"
+      },
+      "DomainOut": {
+        "additionalProperties": false,
+        "properties": {
+          "apps_that_move": {
+            "items": {
+              "$ref": "#/components/schemas/AppMoveOut"
+            },
+            "title": "Apps That Move",
+            "type": "array"
+          },
+          "current_suffix": {
+            "title": "Current Suffix",
+            "type": "string"
+          },
+          "default_suffix": {
+            "title": "Default Suffix",
+            "type": "string"
+          },
+          "delegation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DelegationOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "previous": {
+            "items": {
+              "$ref": "#/components/schemas/PreviousSuffixOut"
+            },
+            "title": "Previous",
+            "type": "array"
+          },
+          "ready_to_flip": {
+            "title": "Ready To Flip",
+            "type": "boolean"
+          },
+          "rolling": {
+            "description": "Environments not yet rolled with the coming suffix among their origins.",
+            "minimum": 0.0,
+            "title": "Rolling",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "default_suffix",
+          "current_suffix",
+          "previous",
+          "delegation",
+          "apps_that_move",
+          "ready_to_flip",
+          "rolling"
+        ],
+        "title": "DomainOut",
+        "type": "object"
+      },
       "EgressHostOut": {
         "additionalProperties": false,
         "properties": {
@@ -3959,6 +4172,14 @@
             ],
             "title": "Current Deployment Id"
           },
+          "form_targets": {
+            "description": "Origins the environment's pages may post forms to beside their own, by byte order; the gateway names them in `form-action`.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Form Targets",
+            "type": "array"
+          },
           "grants_version": {
             "title": "Grants Version",
             "type": "integer"
@@ -3994,7 +4215,8 @@
           "config_version",
           "grants_version",
           "current_deployment_id",
-          "url"
+          "url",
+          "form_targets"
         ],
         "title": "EnvironmentOut",
         "type": "object"
@@ -4067,6 +4289,13 @@
           "DATA_SNAPSHOT_STALE",
           "CONNECTION_UNAVAILABLE",
           "QUERY_TIMEOUT",
+          "DOMAIN_NOT_READY",
+          "DOMAIN_STATE",
+          "DOMAIN_SUFFIX_TOO_SHORT",
+          "DOMAIN_SUFFIX_PUBLIC",
+          "DOMAIN_SUFFIX_RESERVED",
+          "DOMAIN_SUFFIX_HELD",
+          "DOMAIN_SUFFIX_OWN",
           "CELL_UNAVAILABLE",
           "TRANSIENT_CONFLICT",
           "INTERNAL"
@@ -4164,6 +4393,73 @@
           "created_at"
         ],
         "title": "FixedResourceOut",
+        "type": "object"
+      },
+      "FlipIn": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "const": true,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "to": {
+            "enum": [
+              "customer",
+              "default"
+            ],
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "confirm"
+        ],
+        "title": "FlipIn",
+        "type": "object"
+      },
+      "FormTargetsIn": {
+        "additionalProperties": false,
+        "properties": {
+          "origins": {
+            "items": {
+              "description": "`https://` and a lower-case host name, no port or path.",
+              "maxLength": 261,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Origins",
+            "type": "array"
+          }
+        },
+        "required": [
+          "origins"
+        ],
+        "title": "FormTargetsIn",
+        "type": "object"
+      },
+      "FormTargetsOut": {
+        "additionalProperties": false,
+        "properties": {
+          "environment_id": {
+            "title": "Environment Id",
+            "type": "string"
+          },
+          "origins": {
+            "description": "By byte order.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Origins",
+            "type": "array"
+          }
+        },
+        "required": [
+          "environment_id",
+          "origins"
+        ],
+        "title": "FormTargetsOut",
         "type": "object"
       },
       "GrantBody": {
@@ -5630,6 +5926,27 @@
           "who"
         ],
         "title": "PreviewAccessDoc",
+        "type": "object"
+      },
+      "PreviousSuffixOut": {
+        "additionalProperties": false,
+        "properties": {
+          "suffix": {
+            "title": "Suffix",
+            "type": "string"
+          },
+          "until": {
+            "description": "Until when its hosts redirect to the current suffix.",
+            "format": "date-time",
+            "title": "Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "suffix",
+          "until"
+        ],
+        "title": "PreviousSuffixOut",
         "type": "object"
       },
       "PrincipalKind": {
@@ -7959,6 +8276,146 @@
           }
         },
         "summary": "Heartbeat",
+        "tags": [
+          "internal"
+        ]
+      }
+    },
+    "/internal/v1/orgs/{org_id}/domain/retire": {
+      "post": {
+        "description": "Retire the org's customer domain once its parent no longer delegates it, or after 12\nmonths. The public resolvers are asked again first. ``DOMAIN_STATE`` names why not, and\nrefuses the org's current suffix. Audited as ``domain.retired``.",
+        "operationId": "retire_domain_internal_v1_orgs__org_id__domain_retire_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "org_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Org Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelegationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `DOMAIN_STATE`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`CELL_UNAVAILABLE`"
+          }
+        },
+        "summary": "Retire Domain",
         "tags": [
           "internal"
         ]
@@ -11320,6 +11777,120 @@
           }
         },
         "summary": "Create Deployment",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/environments/{environment_id}/form-targets": {
+      "put": {
+        "description": "Replace the origins the environment's pages may post forms to beside their own; an\nempty list leaves only the app's own origin. The gateway sends them in `form-action` once\nthe next snapshot is read. Audited as ``org.updated`` on ``environment``.",
+        "operationId": "put_form_targets_v1_apps__app_id__environments__environment_id__form_targets_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "app_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "App Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "environment_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z]{3}_[a-z0-9]{20}$",
+              "title": "Environment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FormTargetsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FormTargetsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`NOT_FOUND`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          }
+        },
+        "summary": "Put Form Targets",
         "tags": [
           "v1"
         ]
@@ -15932,6 +16503,318 @@
           }
         },
         "summary": "Patch Connection",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/domain": {
+      "get": {
+        "description": "The org's suffixes, its customer domain's delegation, and whether a flip may run now.\nActive org admins only.",
+        "operationId": "get_domain_v1_domain_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`CELL_UNAVAILABLE`"
+          }
+        },
+        "summary": "Get Domain",
+        "tags": [
+          "v1"
+        ]
+      },
+      "put": {
+        "description": "Ask for ``suffix`` as the org's customer domain. The row is kept as ``pending_dns``; the\ndomain tick has the cell make its zone and certificate within a minute, and then the answer\nnames the NS records to add at the parent. A name the admission rules refuse answers its own\n``DOMAIN_SUFFIX_*`` code. The same suffix again changes nothing; another while one is live is\n``ALREADY_EXISTS``, unless that one failed, which it replaces. Audited as\n``domain.requested``.",
+        "operationId": "request_domain_v1_domain_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DomainIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`DOMAIN_SUFFIX_HELD`, `DOMAIN_SUFFIX_OWN`, `ALREADY_EXISTS`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`VALIDATION_FAILED`, `DOMAIN_SUFFIX_TOO_SHORT`, `DOMAIN_SUFFIX_PUBLIC`, `DOMAIN_SUFFIX_RESERVED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`CELL_UNAVAILABLE`"
+          }
+        },
+        "summary": "Request Domain",
+        "tags": [
+          "v1"
+        ]
+      }
+    },
+    "/v1/domain/flip": {
+      "post": {
+        "description": "Move every app of the org to its customer suffix (``to: customer``) or back to the\ndefault one, once every environment has rolled with the coming suffix among its origins\n(``DOMAIN_NOT_READY`` until then). The suffix left stays a previous one for 30 days: its\nhosts redirect. One snapshot carries the change. Audited as ``domain.flipped``.",
+        "operationId": "flip_domain_v1_domain_flip_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlipIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REQUIRED`"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`UNAUTHENTICATED`"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`FORBIDDEN`, `AGENT_SESSION_REFUSED`"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_IN_FLIGHT`, `DOMAIN_NOT_READY`, `DOMAIN_STATE`"
+          },
+          "413": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`REQUEST_TOO_LARGE`"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`IDEMPOTENCY_KEY_REUSED`, `VALIDATION_FAILED`"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`RATE_LIMITED`"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`CELL_UNAVAILABLE`"
+          }
+        },
+        "summary": "Flip Domain",
         "tags": [
           "v1"
         ]

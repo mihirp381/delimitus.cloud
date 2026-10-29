@@ -105,6 +105,9 @@ KNOWN: Final[Mapping[str, Callable[[Ids], Probe]]] = {
     "DELETE /v1/apps/{app_id}/environments/{environment_id}/connections/{name}": lambda i: Probe(
         "DELETE", f"{_env(i, i.preview)}/connections/{NO_CONNECTION}"
     ),
+    "PUT /v1/apps/{app_id}/environments/{environment_id}/form-targets": lambda i: Probe(
+        "PUT", f"{_env(i, f'env_{ZERO}')}/form-targets", {"origins": []}
+    ),
     "POST /v1/apps/{app_id}/environments/{environment_id}/database/rotate": lambda i: Probe(
         "POST", f"{_env(i, i.preview)}/database/rotate"
     ),
@@ -138,6 +141,10 @@ KNOWN: Final[Mapping[str, Callable[[Ids], Probe]]] = {
     ),
     "PATCH /v1/connections/{name}": lambda _: Probe(
         "PATCH", f"/v1/connections/{NO_CONNECTION}", {"status": "suspended"}
+    ),
+    "PUT /v1/domain": lambda _: Probe("PUT", "/v1/domain", {"suffix": "example.com"}),
+    "POST /v1/domain/flip": lambda _: Probe(
+        "POST", "/v1/domain/flip", {"to": "customer", "confirm": True}
     ),
     "DELETE /v1/egress/hosts/{host}": lambda _: Probe("DELETE", f"/v1/egress/hosts/{NO_HOST}"),
     "PUT /v1/egress/hosts/{host}": lambda _: Probe("PUT", f"/v1/egress/hosts/{HIGH_RISK_HOST}", {}),

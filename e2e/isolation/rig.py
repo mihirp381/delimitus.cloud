@@ -131,7 +131,7 @@ asyncio.run(main())
 def snapshot(limit: int) -> dict[str, Any]:
     """The cell's one org: A with a prod environment, B with prod and a preview limited to
     ``limit`` seconds a request. Ada may open all three, Ben A and B's prod, Cy (a member)
-    nothing."""
+    nothing. B's preview names A as a form target."""
 
     def grant(n: int, user: str) -> dict[str, Any]:
         return {
@@ -153,6 +153,7 @@ def snapshot(limit: int) -> dict[str, Any]:
             BRAVO_PREVIEW: {"app_id": BRAVO, "name": "preview", "timeout_seconds": limit, **env},
         },
         "hosts": {"alpha": ALPHA_PROD, "bravo": BRAVO_PROD, "bravo--preview": BRAVO_PREVIEW},
+        "form_targets": {BRAVO_PREVIEW: [f"https://alpha.{BASE}"]},
         "grants": {
             ALPHA_PROD: [grant(1, ADA), grant(2, BEN)],
             BRAVO_PROD: [grant(3, ADA), grant(4, BEN)],

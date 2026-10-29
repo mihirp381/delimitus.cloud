@@ -38,6 +38,8 @@ from ssc_control.db.engine import make_engine
 from ssc_control.deploy import jobs as deploy_jobs
 from ssc_control.deploy.build_driver import FakeBuildDriver
 from ssc_control.deploy.gates import approvals_prod_gate
+from ssc_control.domains import jobs as domains_jobs
+from ssc_control.domains.probe import DohResolver, doh_resolvers
 from ssc_control.github import jobs as github_jobs
 from ssc_control.github.client import DEFAULT_BASE as GITHUB_BASE
 from ssc_control.github.client import GitHubApp
@@ -54,6 +56,7 @@ from ssc_control.runtime import jobs as runtime_jobs
 from ssc_control.runtime.app_databases import FakeAppDatabases
 from ssc_control.runtime.cell_agent import MetadataIdTokens
 from ssc_control.runtime.cell_datagw import FakeCellSchemas
+from ssc_control.runtime.cell_domains import FakeCellDomains
 from ssc_control.runtime.cell_egress import FakeCellEgress
 from ssc_control.runtime.cell_removal import FakeCellRemoval
 from ssc_control.runtime.cells import (
@@ -116,6 +119,7 @@ SMTP_TLS_ENV: Final = "SSC_SMTP_TLS"
 SMTP_USER_ENV: Final = "SSC_SMTP_USER"
 SMTP_PASSWORD_ENV: Final = "SSC_SMTP_PASSWORD"  # noqa: S105  (an environment variable name)
 MAIL_FROM_ENV: Final = "SSC_MAIL_FROM"
+OPERATOR_MAIL_ENV: Final = "SSC_OPERATOR_MAIL"
 ONBOARDING_TICK_CRON_ENV: Final = "SSC_ONBOARDING_TICK_CRON"
 CONSOLE_URL_ENV: Final = "SSC_CONSOLE_URL"
 DEV_CONSOLE_URL: Final = "http://localhost:5173"
@@ -221,6 +225,7 @@ def build_app(dsn: str, *, settings: WorkerSettings | None = None) -> App:
     app.add_tasks_from(
         onboarding_jobs.blueprint(tick_cron=s.onboarding_cron), namespace=onboarding_jobs.NAMESPACE
     )
+    app.add_tasks_from(domains_jobs.blueprint(), namespace=domains_jobs.NAMESPACE)
     return app
 
 
@@ -293,6 +298,7 @@ def cells_of(
             datagw=FakeCellSchemas() if fake else None,
             identity=app_identity_from_env(env),
             removal=FakeCellRemoval() if fake else None,
+            domains=FakeCellDomains() if fake else None,
         )
     )
 
@@ -448,6 +454,14 @@ def console_url_from_env(env: Mapping[str, str]) -> str:
     return url.rstrip("/")
 
 
+def operator_mail_from_env(env: Mapping[str, str]) -> str | None:
+    """``SSC_OPERATOR_MAIL``: where a stalled certificate is reported besides the log."""
+    value = env.get(OPERATOR_MAIL_ENV, "").strip()
+    if value and "@" not in value:
+        raise CompositionError(f"{OPERATOR_MAIL_ENV} is not a mail address")
+    return value or None
+
+
 def mailer_from_env(env: Mapping[str, str], console_url: str) -> Mailer | None:
     """``SSC_MAIL_TRANSPORT``: unset is the log mailer in development and tests and none
     elsewhere (queued mail waits), ``log`` the log mailer, ``smtp`` plain SMTP to
@@ -518,6 +532,7 @@ def refuse_fakes(ports: Ports, env: Mapping[str, str]) -> None:
             | FakeCellEgress
             | FakeCellSchemas
             | FakeCellRemoval
+            | FakeCellDomains
             | LogMailer,
         )
     ]
@@ -550,6 +565,8 @@ def compose_ports(env: Mapping[str, str]) -> Ports:
         mailer=mailer_from_env(env, console_url),
         console_url=console_url,
         mail_from=env.get(MAIL_FROM_ENV) or None,
+        resolvers=doh_resolvers(),
+        operator_mail=operator_mail_from_env(env),
     )
     refuse_fakes(ports, env)
     return ports
@@ -595,6 +612,9 @@ async def run(env: Mapping[str, str] | None = None) -> None:
             await ports.cells.aclose()
         if isinstance(ports.timer_dispatcher, HttpsScheduleDispatcher):
             await ports.timer_dispatcher.aclose()
+        for resolver in (ports.resolvers or {}).values():
+            if isinstance(resolver, DohResolver):
+                await resolver.aclose()
         await ports.engine.dispose()
 
 
@@ -625,6 +645,7 @@ __all__ = [
     "core_blueprint",
     "directory_from_env",
     "mailer_from_env",
+    "operator_mail_from_env",
     "metrics_from_env",
     "ports_of",
     "queue_conninfo",

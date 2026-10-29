@@ -1,7 +1,8 @@
 """Identity note v1: the claims the gateway signs into ``X-SSC-Identity`` on every request.
 
 This is a public, versioned contract (``docs/contracts/identity-note.md``). It changes by adding
-a new version, never by editing v1. Two rules every consumer must keep:
+a new version, never by editing v1; the one exception, ``aud`` becoming the environment id, is the
+contract's amendment of 2026-10-28. Two rules every consumer must keep:
 
 * Key on ``sub``. It is a ``usr_`` or ``sch_`` id that never changes. ``email`` and ``name`` are
   display strings that a directory can change at any time, and a note for a schedule carries
@@ -27,7 +28,7 @@ MAX_GROUPS: Final = 50
 Role = Literal["builder", "user", "schedule"]
 EnvironmentName = Literal["prod", "preview"]
 
-_ORIGIN = r"^https://[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+(:[0-9]{1,5})?$"
+_ENVIRONMENT = r"^env_[a-z0-9]{20}$"
 _EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 _GROUP = re.compile(r"grp_[a-z0-9]{20}")
 
@@ -38,7 +39,7 @@ class IdentityNote(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     iss: str = Field(pattern=r"^https://[a-z0-9.-]+/[a-z0-9-]+$")
-    aud: str = Field(pattern=_ORIGIN)
+    aud: str = Field(pattern=_ENVIRONMENT)
     sub: str = Field(pattern=r"^(usr|sch)_[a-z0-9]{20}$")
     iat: int = Field(ge=0)
     exp: int = Field(ge=0)

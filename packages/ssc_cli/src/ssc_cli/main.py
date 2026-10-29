@@ -14,6 +14,7 @@ from ssc_cli.commands.connections import connect, connections
 from ssc_cli.commands.database import database_app
 from ssc_cli.commands.deploy import deploy
 from ssc_cli.commands.doctor import doctor
+from ssc_cli.commands.domains import domains_app
 from ssc_cli.commands.init import init
 from ssc_cli.commands.lifecycle import disable, enable
 from ssc_cli.commands.login import login, logout
@@ -98,3 +99,4 @@ app.add_typer(access_app)
 app.add_typer(secret_app)
 app.add_typer(repo_app)
 app.add_typer(database_app)
+app.add_typer(domains_app)

@@ -13,6 +13,7 @@ import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthedAuditRouteImport } from './routes/_authed/audit'
+import { Route as AuthedDomainRouteImport } from './routes/_authed/domain'
 import { Route as AuthedEgressRouteImport } from './routes/_authed/egress'
 import { Route as AuthedEnvironmentRouteImport } from './routes/_authed/environment'
 import { Route as AuthedHelpRouteImport } from './routes/_authed/help'
@@ -43,6 +44,11 @@ const AuthedIndexRoute = AuthedIndexRouteImport.update({
 const AuthedAuditRoute = AuthedAuditRouteImport.update({
   id: '/audit',
   path: '/audit',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedDomainRoute = AuthedDomainRouteImport.update({
+  id: '/domain',
+  path: '/domain',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedEgressRoute = AuthedEgressRouteImport.update({
@@ -114,6 +120,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthedIndexRoute
   '/login': typeof LoginRoute
   '/audit': typeof AuthedAuditRoute
+  '/domain': typeof AuthedDomainRoute
   '/egress': typeof AuthedEgressRoute
   '/environment': typeof AuthedEnvironmentRoute
   '/help': typeof AuthedHelpRoute
@@ -130,6 +137,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/audit': typeof AuthedAuditRoute
+  '/domain': typeof AuthedDomainRoute
   '/egress': typeof AuthedEgressRoute
   '/environment': typeof AuthedEnvironmentRoute
   '/help': typeof AuthedHelpRoute
@@ -149,6 +157,7 @@ export interface FileRoutesById {
   '/_authed': typeof AuthedRouteWithChildren
   '/login': typeof LoginRoute
   '/_authed/audit': typeof AuthedAuditRoute
+  '/_authed/domain': typeof AuthedDomainRoute
   '/_authed/egress': typeof AuthedEgressRoute
   '/_authed/environment': typeof AuthedEnvironmentRoute
   '/_authed/help': typeof AuthedHelpRoute
@@ -169,6 +178,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/audit'
+    | '/domain'
     | '/egress'
     | '/environment'
     | '/help'
@@ -185,6 +195,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/audit'
+    | '/domain'
     | '/egress'
     | '/environment'
     | '/help'
@@ -203,6 +214,7 @@ export interface FileRouteTypes {
     | '/_authed'
     | '/login'
     | '/_authed/audit'
+    | '/_authed/domain'
     | '/_authed/egress'
     | '/_authed/environment'
     | '/_authed/help'
@@ -252,6 +264,13 @@ declare module '@tanstack/react-router' {
       path: '/audit'
       fullPath: '/audit'
       preLoaderRoute: typeof AuthedAuditRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/domain': {
+      id: '/_authed/domain'
+      path: '/domain'
+      fullPath: '/domain'
+      preLoaderRoute: typeof AuthedDomainRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/egress': {
@@ -343,6 +362,7 @@ declare module '@tanstack/react-router' {
 
 interface AuthedRouteChildren {
   AuthedAuditRoute: typeof AuthedAuditRoute
+  AuthedDomainRoute: typeof AuthedDomainRoute
   AuthedEgressRoute: typeof AuthedEgressRoute
   AuthedEnvironmentRoute: typeof AuthedEnvironmentRoute
   AuthedHelpRoute: typeof AuthedHelpRoute
@@ -359,6 +379,7 @@ interface AuthedRouteChildren {
 
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedAuditRoute: AuthedAuditRoute,
+  AuthedDomainRoute: AuthedDomainRoute,
   AuthedEgressRoute: AuthedEgressRoute,
   AuthedEnvironmentRoute: AuthedEnvironmentRoute,
   AuthedHelpRoute: AuthedHelpRoute,

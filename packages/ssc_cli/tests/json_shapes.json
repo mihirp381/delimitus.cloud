@@ -258,6 +258,33 @@
     "findings": "array<Finding>",
     "path": "string"
   },
+  "DomainAppRow": {
+    "hosts": "array<string>",
+    "slug": "string"
+  },
+  "DomainPreviousRow": {
+    "suffix": "string",
+    "until": "string"
+  },
+  "DomainResult": {
+    "api_url": "string",
+    "apps_that_move": "array<DomainAppRow>",
+    "current_suffix": "string",
+    "default_suffix": "string",
+    "failure": "string|null",
+    "it_ticket": "string|null",
+    "moved": "boolean",
+    "name_servers": "array<string>",
+    "observed": "array<string>",
+    "previous": "array<DomainPreviousRow>",
+    "provider": "string|null",
+    "ready_to_flip": "boolean",
+    "records": "array<string>",
+    "rolling": "integer",
+    "state": "string|null",
+    "suffix": "string|null",
+    "zone": "string|null"
+  },
   "EnvironmentRow": {
     "config_version": "integer",
     "current_deployment_id": "string|null",

@@ -43,6 +43,9 @@ environment, asked of the cell's data gateway with the agent's own ID token and 
 ``{"status", "body"}``, the gateway's own status and JSON, so the control plane maps its codes;
 502 ``DATAGW_ERROR`` when the gateway could not be asked, and 503 ``DATAGW_NOT_CONFIGURED``
 without its address. The agent logs the method and the status, never the body.
+Domains (CD-3) have ``create``, ``status`` and ``retire`` of one suffix's zone and certificate;
+404 ``DOMAIN_NOT_FOUND``, 502 ``DOMAINS_ERROR``, and 503 ``DOMAINS_NOT_CONFIGURED`` without the
+entry address and certificate map.
 """
 
 import json
@@ -64,9 +67,11 @@ from ssc_agent.app_database import (
 from ssc_agent.cloud_logging import CellLogHub
 from ssc_agent.cloud_monitoring import CellUsageReader
 from ssc_agent.datagw import DataGateway, DataGatewayError
+from ssc_agent.domains import CellDomains, DomainNotFoundError, DomainsError
 from ssc_agent.egress import EgressNotConfiguredError, ProxyCredentials
 from ssc_agent.files import CellFiles, FilesError
 from ssc_agent.secret_manager import SecretCustody, SecretsError, service_of
+from ssc_contracts.snapshot import check_suffix
 from ssc_shared.build import (
     BuildDriverError,
     BuildNotFoundError,
@@ -117,6 +122,7 @@ USAGE_PREFIX: Final = "/v1/usage"
 EGRESS_PREFIX: Final = "/v1/egress"
 FILES_PREFIX: Final = "/v1/files"
 DATAGW_PREFIX: Final = "/v1/datagw"
+DOMAINS_PREFIX: Final = "/v1/domains"
 HEALTH_PATH: Final = "/healthz"
 WRONG_CELL: Final = "WRONG_CELL"
 # No call to the agent carries more than a spec or a few names; a larger body is 413.
@@ -166,6 +172,7 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
     egress: ProxyCredentials | None = None,
     files: CellFiles | None = None,
     datagw: DataGateway | None = None,
+    domains: CellDomains | None = None,
 ) -> FastAPI:
     org = check_org(org_id)
     app = FastAPI(title="ssc-cell-agent", docs_url=None, redoc_url=None, openapi_url=None)
@@ -229,6 +236,7 @@ def create_app(  # noqa: PLR0913  (usage is keyword-only)
     _egress_routes(app, egress)
     _file_routes(app, driver, files)
     _datagw_routes(app, datagw)
+    _domain_routes(app, domains)
     return app
 
 
@@ -537,6 +545,46 @@ def _datagw_routes(app: FastAPI, datagw: DataGateway | None) -> None:
             return _error(502, "DATAGW_ERROR", str(exc))
         log.info("datagw call", extra={"method": method, "status": answer.status})
         return JSONResponse({"status": answer.status, "body": answer.body})
+
+
+def _domain_routes(app: FastAPI, domains: CellDomains | None) -> None:
+    @app.post(DOMAINS_PREFIX + "/{method}")
+    async def domain_call(method: str, request: Request) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]  # noqa: PLR0911  (one return per refusal)
+        if method not in ("create", "status", "retire"):
+            return _error(404, "NOT_FOUND", f"no method {method}")
+        if domains is None:
+            return _error(503, "DOMAINS_NOT_CONFIGURED", "this agent has no entry address or map")
+        try:
+            body: object = await _json_body(request)
+            if not isinstance(body, dict):
+                raise TypeError("the body is not a JSON object")
+            suffix = check_suffix(_str(cast("dict[str, Any]", body), "suffix"))
+            if method == "create":
+                made = await domains.create(suffix)
+                result: dict[str, object] = {
+                    "zone_name": made.zone_name,
+                    "name_servers": list(made.name_servers),
+                    "certificate": made.certificate,
+                }
+            elif method == "status":
+                seen = await domains.status(suffix)
+                result = {
+                    "name_servers": list(seen.name_servers),
+                    "state": seen.state,
+                    "detail": seen.detail,
+                }
+            else:
+                await domains.retire(suffix)
+                result = {"retired": suffix}
+        except (ValueError, TypeError, KeyError) as exc:
+            return _error(400, "INVALID_REQUEST", str(exc))
+        except DomainNotFoundError as exc:
+            return _error(404, "DOMAIN_NOT_FOUND", str(exc))
+        except DomainsError as exc:
+            log.warning("domains call failed: %s: %s", method, exc)
+            return _error(502, "DOMAINS_ERROR", str(exc))
+        log.info("domains call: %s: %s", method, suffix)
+        return JSONResponse(result)
 
 
 def _database_to_wire(made: AppDatabase) -> dict[str, object]:

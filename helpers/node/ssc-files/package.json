@@ -1,6 +1,6 @@
 {
   "name": "@delimitus/ssc-files",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Keep files through the SSC cell's file broker: signed links, no storage credentials. Zero dependencies.",
   "type": "module",
   "main": "./index.js",

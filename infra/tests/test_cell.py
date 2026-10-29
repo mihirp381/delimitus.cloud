@@ -84,6 +84,8 @@ AGENT_ENV = {  # what ssc_agent.__main__ reads
     "SSC_OUTBOUND_IP",
     "SSC_CELL_BUCKET",
     "SSC_ORG_ID",
+    "SSC_ENTRY_IP",
+    "SSC_CERTIFICATE_MAP",
 }
 TOOLS_IMAGE = f"{naming.platform_registry()}/ssc-build-tools@sha256:" + "d" * 64
 FRONTEND_IMAGE = f"{naming.platform_registry()}/railpack-frontend@sha256:" + "e" * 64
@@ -619,7 +621,6 @@ DATAGW_ENV = {
     "SSC_CELL_BUCKET",
     "SSC_DATAGW_AUDIENCE",
     "SSC_IDENTITY_JWKS",
-    "SSC_APPS_DOMAIN",
     "SSC_IDENTITY_ISSUER",
     "SSC_DATAGW_AGENT_ACCOUNT",
 }
@@ -646,7 +647,6 @@ def test_the_data_gateway_runs_its_image_with_the_cell_wired_in() -> None:
         naming.DATA_GATEWAY, project_number(project)
     )
     assert env["SSC_IDENTITY_JWKS"] == GATEWAY["gateway_jwks"]
-    assert env["SSC_APPS_DOMAIN"] == naming.APPS_DOMAIN
     assert env["SSC_IDENTITY_ISSUER"] == f"https://{naming.KEYS_HOST}/{label}"
     assert env["SSC_DATAGW_AGENT_ACCOUNT"] == naming.sa_email(naming.CELL_AGENT, project)
 
@@ -1076,6 +1076,8 @@ def test_the_agent_runs_its_image_with_the_cell_wired_in() -> None:
     assert env["SSC_PROXY_ADDRESS"] == "10.20.4.10"
     assert env["SSC_OUTBOUND_IP"] == mockcloud.nat_address("ssc-c-testcell05")
     assert env["SSC_ORG_ID"] == AGENT_ORG
+    assert env["SSC_ENTRY_IP"] == entry_address("ssc-c-testcell05")
+    assert env["SSC_CERTIFICATE_MAP"] == "ssc-entry"
     assert set(env) == AGENT_ENV
     subnet = one(declared, "gcp:compute/subnetworkIAMMember:SubnetworkIAMMember").inputs
     assert (subnet["subnetwork"], subnet["role"]) == ("apps", "roles/compute.networkUser")
@@ -1456,6 +1458,25 @@ def test_only_the_worker_may_change_objects_in_the_cell_bucket(cell_a: list[Decl
     ]
 
 
+def test_the_agent_makes_domain_zones_but_never_deletes_one(cell_a: list[Declared]) -> None:
+    role = one(cell_a, "gcp:projects/iAMCustomRole:IAMCustomRole", "agent-domains").inputs
+    assert role["roleId"] == "sscCellAgentDomains"
+    assert role["permissions"] == list(cell.DOMAINS_PERMISSIONS)
+    assert len(set(cell.DOMAINS_PERMISSIONS)) == 26
+    assert "dns.managedZones.delete" not in role["permissions"]
+    assert "no zone delete on purpose" in role["description"]
+    agent = f"serviceAccount:{naming.sa_email('ssc-cell-agent', naming.cell_project(A))}"
+    grant = one(cell_a, "gcp:projects/iAMMember:IAMMember", "agent-domains").inputs
+    assert (grant["member"], grant["role"]) == (
+        agent,
+        f"projects/{naming.cell_project(A)}/roles/sscCellAgentDomains",
+    )
+    assert grant.get("condition") is None
+    assert "no IAM condition" in role["description"]
+    held = {p for d in cell_a if d.type.endswith("IAMCustomRole") for p in d.inputs["permissions"]}
+    assert not [p for p in held if p.startswith("dns.managedZones.delete")]
+
+
 def _grants(declared: list[Declared], member: str) -> dict[str, dict[str, str] | None]:
     return {
         d.inputs["role"]: d.inputs.get("condition")
@@ -1542,7 +1563,12 @@ def test_the_cell_agent_holds_only_what_the_driver_calls(cell_a: list[Declared])
         for r, held in roles.items()
         if r.startswith("sscCellAgent") and any(p.endswith(".delete") for p in held)
     }
-    assert deleting == {"sscCellAgentRemove", "sscCellAgentDatabase", "sscCellAgentFiles"}
+    assert deleting == {
+        "sscCellAgentRemove",
+        "sscCellAgentDatabase",
+        "sscCellAgentFiles",
+        "sscCellAgentDomains",
+    }
     assert "iam.serviceAccounts.actAs" in runtime
     assert {"run.services.setIamPolicy", "run.revisions.list"} <= set(runtime)
     assert "cloudbuild.builds.create" in roles["sscCellAgentCreate"]
@@ -2270,7 +2296,7 @@ def test_the_agent_and_intake_hosts_are_each_routed_to_their_service_alone(
     assert intake == "ssc--secrets.testcell09.delimitusapps.com"
     suffix = naming.cell_wildcard("testcell09").removeprefix("*.")
     for reserved in (host, intake):
-        assert parse_app_host(reserved, naming.APPS_DOMAIN) is None
+        assert parse_app_host(reserved, [suffix]) is None
         assert reserved.split(".", 1)[1] == suffix
     url_map = one(bare, "gcp:compute/uRLMap:URLMap", "entry-map").inputs
     assert url_map["hostRules"] == [

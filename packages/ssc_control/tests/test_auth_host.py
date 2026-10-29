@@ -15,6 +15,7 @@ import secrets
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -22,17 +23,22 @@ import httpx2
 import jwt
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from ssc_testkit import Dsns, assert_problem
 from test_identity import BOB_IDP, BOB_UID, FOUNDER_IDP, World, new_world, profile
 
 from ssc_contracts.audit import ActorKind, AuditAction
+from ssc_contracts.domains import resource_name
 from ssc_contracts.errors import ErrorCode
 from ssc_control.api import Settings, create_app
 from ssc_control.api.auth import Verifier
 from ssc_control.api.settings import USER_AUDIENCE
 from ssc_control.audit.chain import Actor
 from ssc_control.db import NewOrg, bound_org, create_org, make_engine
+from ssc_control.db.domains import insert_domain, update_state
+from ssc_control.domains.flip import flip
+from ssc_control.domains.lifecycle import retire
 from ssc_control.identity import join, pages, sessions, tokens
 from ssc_control.identity.authhost import DEVICE_GRANT, AuthHost, create_auth_app
 from ssc_control.identity.cell_callers import CallerCheck, CellCaller, DevCallers
@@ -50,7 +56,9 @@ from ssc_control.identity.limits import (
     USER_CODE_PER_HOUR,
     USER_CODE_PER_ORG_PER_HOUR,
 )
+from ssc_control.identity.rules import ReturnTo, parse_return_to
 from ssc_control.identity.settings import AuthSettings
+from ssc_control.runtime.cell_domains import FakeCellDomains
 from ssc_shared.hosts import cell_project
 
 AUTH = "https://auth.test"
@@ -269,6 +277,106 @@ async def test_a_bad_login_link_is_refused(rig: Rig, change: dict[str, str]) -> 
     params.update({k: v.replace("LABEL", rig.label) for k, v in change.items()})
     r = await rig.http.get("/login", params=params)
     assert (r.status_code, r.text) == (400, pages.BAD_REQUEST)
+
+
+def test_a_return_to_is_an_app_host_under_the_orgs_own_suffix() -> None:
+    own = "tools.testorg.com"
+    assert parse_return_to("https://ledger.tools.testorg.com/a?b=1", suffixes=[own]) == ReturnTo(
+        "ledger.tools.testorg.com", "/a?b=1"
+    )
+    for other in (
+        "https://ledger.tools.otherorg.com/",
+        "https://ledger.k7q2m9xa.apps.test/",
+        "https://a.ledger.tools.testorg.com/",
+        "https://tools.testorg.com/",
+    ):
+        assert parse_return_to(other, suffixes=[own]) is None
+
+
+async def test_a_login_link_follows_the_orgs_suffix(rig: Rig) -> None:
+    async with bound_org(rig.w.engine, rig.w.org) as conn:
+        await conn.execute(
+            text("update ssc.org set apps_suffix = 'login.testorg.com' where id = :org"),
+            {"org": rig.w.org},
+        )
+    params = {"org": rig.w.org, "binding": binding_of("n")}
+    custom = await rig.http.get(
+        "/login", params={**params, "return_to": "https://ledger.login.testorg.com/"}
+    )
+    assert custom.status_code == 302
+    default = await rig.http.get("/login", params={**params, "return_to": rig.app_url()})
+    assert (default.status_code, default.text) == (400, pages.BAD_REQUEST)
+
+
+async def test_a_login_link_may_name_a_suffix_the_org_left_in_the_last_30_days(rig: Rig) -> None:
+    base = f"{rig.w.org[4:]}.testorg.com"
+    async with bound_org(rig.w.engine, rig.w.org) as conn:
+        await conn.execute(
+            text("update ssc.org set apps_suffix = :s where id = :org"),
+            {"org": rig.w.org, "s": f"now.{base}"},
+        )
+        await conn.execute(
+            text(
+                "insert into ssc.org_suffix_retired (org_id, suffix, until) values "
+                "(:org, :moved, now() + interval '29 days'), "
+                "(:org, :gone, now() - interval '1 minute')"
+            ),
+            {"org": rig.w.org, "moved": f"moved.{base}", "gone": f"gone.{base}"},
+        )
+    params = {"org": rig.w.org, "binding": binding_of("n")}
+    moved = await rig.http.get(
+        "/login", params={**params, "return_to": f"https://ledger.moved.{base}/a"}
+    )
+    assert moved.status_code == 302
+    gone = await rig.http.get(
+        "/login", params={**params, "return_to": f"https://ledger.gone.{base}/a"}
+    )
+    assert (gone.status_code, gone.text) == (400, pages.BAD_REQUEST)
+
+
+async def test_a_retire_after_a_flip_back_ends_the_customer_suffix_at_once(rig: Rig) -> None:
+    custom = f"back.{rig.w.org[4:]}.testorg.com"
+    actor = Actor(ActorKind.OPERATOR, "op_dana")
+    now = datetime.now(UTC)
+    async with bound_org(rig.w.engine, rig.w.org) as conn:
+        row = await insert_domain(
+            conn, org_id=rig.w.org, suffix=custom, zone_name=resource_name(custom)
+        )
+        await update_state(
+            conn, org_id=rig.w.org, domain_id=row.id, state="active", last_delegated_at=now
+        )
+        await conn.execute(
+            text("update ssc.org set apps_suffix = :s where id = :org"),
+            {"org": rig.w.org, "s": custom},
+        )
+        default = f"{rig.label}.{DOMAIN}"
+        await flip(
+            conn,
+            rig.w.org,
+            "default",
+            actor,
+            now,
+            apps_domain=DOMAIN,
+            rolling=0,
+            counted_for=default,
+        )
+    params = {
+        "org": rig.w.org,
+        "binding": binding_of("n"),
+        "return_to": f"https://ledger.{custom}/a",
+    }
+    assert (await rig.http.get("/login", params=params)).status_code == 302
+    async with bound_org(rig.w.engine, rig.w.org) as conn:
+        row = await update_state(
+            conn,
+            org_id=rig.w.org,
+            domain_id=row.id,
+            state="active",
+            observed_ns={"cloudflare": [], "google": [], "quad9": []},
+        )
+        await retire(conn, FakeCellDomains(), row, actor, datetime.now(UTC))
+    gone = await rig.http.get("/login", params=params)
+    assert (gone.status_code, gone.text) == (400, pages.BAD_REQUEST)
 
 
 async def test_a_callback_without_its_login_cookie_or_state_is_refused(rig: Rig) -> None:

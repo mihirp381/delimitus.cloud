@@ -7,12 +7,13 @@ Every ``RuntimeDriver`` passes ``conformance/ssc_conformance/contracts/runtime_d
 ``CellAgentDriver`` (``cell_agent.py``), which reaches the Cloud Run driver through the cell agent.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 
 from ssc_contracts import app_database, app_env, egress
 from ssc_contracts.manifest import Manifest, is_session_app, max_instances
+from ssc_control.db.orgs import suffix_of
 from ssc_shared.hosts import app_origin, slug_problem
 from ssc_shared.runtime import (
     FINGERPRINT_VERSION,
@@ -74,27 +75,43 @@ class DatabaseRow:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AppIdentity:
     """The cell's identity settings (SSC-018). ``keys_url`` is its public JWKS as a ``data:``
-    URL; ``cell_label`` and ``apps_domain`` make each app's origin. Either is None when its
-    setting is unset, and the variable it makes is then left out."""
+    URL; ``cell_label``, ``apps_domain`` and the org's ``suffix`` make each app's origin
+    (``db.orgs.suffix_of``), and ``previous_suffixes`` its origins in a redirect window. Either
+    of the first two is None when its setting is unset, and the variable it makes is then left
+    out."""
 
     keys_url: str | None
     cell_label: str | None
     apps_domain: str
+    suffix: str | None = None
+    previous_suffixes: tuple[str, ...] = ()
 
 
-def identity_env(identity: AppIdentity | None, slug: str | None, env: EnvName) -> dict[str, str]:
-    """``SSC_IDENTITY_KEYS_URL`` and ``SSC_APP_ORIGIN``, the identity note's keys and audience.
-    The origin is also Streamlit's allowed origin (``app_env.STREAMLIT_ALLOWED_ORIGINS``). No
-    origin for a slug stored before the host rule refused it."""
+def identity_suffixes(identity: AppIdentity | None) -> tuple[str, ...]:
+    """The org's current suffix, then its previous ones; none without a cell label."""
+    if identity is None or not identity.cell_label:
+        return ()
+    current = suffix_of(identity.cell_label, identity.suffix, identity.apps_domain)
+    return (current, *identity.previous_suffixes)
+
+
+def identity_env(
+    identity: AppIdentity | None, slug: str | None, env: EnvironmentRow, suffixes: Sequence[str]
+) -> dict[str, str]:
+    """``SSC_APP_ENV_ID``, the identity note's audience, ``SSC_IDENTITY_KEYS_URL`` and
+    ``SSC_APP_ORIGIN``, the origin under ``suffixes[0]``. Streamlit's allowed origins
+    (``app_env.STREAMLIT_ALLOWED_ORIGINS``) are the origins under every suffix, space separated
+    as Streamlit splits the variable. No origin for a slug stored before the host rule refused
+    it."""
     if identity is None:
         return {}
-    plain: dict[str, str] = {}
+    plain = {app_env.APP_ENV_ID: env.id}
     if identity.keys_url:
         plain[app_env.IDENTITY_KEYS_URL] = identity.keys_url
-    if identity.cell_label and slug and slug_problem(slug) is None:
-        origin = app_origin(slug, env, identity.cell_label, identity.apps_domain)
-        plain[app_env.APP_ORIGIN] = origin
-        plain[app_env.STREAMLIT_ALLOWED_ORIGINS] = origin
+    if suffixes and slug and slug_problem(slug) is None:
+        origins = list(dict.fromkeys(app_origin(slug, env.name, s) for s in suffixes))
+        plain[app_env.APP_ORIGIN] = origins[0]
+        plain[app_env.STREAMLIT_ALLOWED_ORIGINS] = " ".join(origins)
     return plain
 
 
@@ -152,7 +169,7 @@ def desired_for(  # noqa: PLR0913  (keyword-only)
     session = is_session_app(runtime, framework)
     billing = billing_for(runtime, framework)
     plain = {app_env.PORT: str(runtime.port), app_env.HOME: app_env.HOME_VALUE}
-    plain |= identity_env(identity, slug, env.name)
+    plain |= identity_env(identity, slug, env, identity_suffixes(identity))
     mounted = dict(secrets or {})
     if manifest.state.postgres and database is not None:
         plain |= database_env(service, database)
@@ -204,6 +221,7 @@ __all__ = [
     "database_env",
     "desired_for",
     "identity_env",
+    "identity_suffixes",
     "max_instances_for",
     "revision_fingerprint",
     "service_name",

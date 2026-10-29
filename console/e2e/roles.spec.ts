@@ -13,7 +13,7 @@ const composeProject = process.env.SSC_E2E_COMPOSE_PROJECT ?? '';
 const composeFile = process.env.SSC_E2E_COMPOSE_FILE ?? '';
 
 const EVERYONE = ['Apps', 'Approvals', 'Connections', 'Internet access'];
-const ADMIN_ONLY = ['People', 'Audit log', 'Usage'];
+const ADMIN_ONLY = ['Your own address', 'People', 'Audit log', 'Usage'];
 const HELP = 'Help';
 const FORBIDDEN = 'Your credential is valid but does not allow this action.';
 
@@ -202,7 +202,7 @@ test('an org admin sees every screen and the admin actions', async ({ page, requ
   const w = await world(request);
   await signIn(page, '/', adminToken);
   await expect(nav(page)).toHaveText([...EVERYONE, ...ADMIN_ONLY, HELP]);
-  // Eight links, the count outside the Approvals link: every one is on show, none below the fold.
+  // Nine links, the count outside the Approvals link: every one is on show, none below the fold.
   await expect(nav(page).first()).toBeInViewport({ ratio: 1 });
   await expect(nav(page).last()).toBeInViewport({ ratio: 1 });
 

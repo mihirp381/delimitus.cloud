@@ -1,7 +1,7 @@
 """Build the FastAPI application. ``create_app(settings)`` is the only constructor."""
 
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any, Final
 
@@ -29,6 +29,7 @@ from ssc_control.api.routes.v1.github import WEBHOOK_PATH
 from ssc_control.api.runtime import Runtime, runtime_of
 from ssc_control.api.settings import Settings
 from ssc_control.db.engine import make_engine
+from ssc_control.domains.probe import DohResolver, Resolver, doh_resolvers
 from ssc_control.github.client import GitHubApp
 from ssc_control.metrics import metrics_port
 from ssc_control.runtime.cell_agent import MetadataIdTokens
@@ -79,6 +80,7 @@ def create_app(  # noqa: PLR0913  (the ports a test replaces, by keyword)
     cells: CellPorts | None = None,
     github: GitHubApp | None = None,
     cell_stores: CellStores | None = None,
+    resolvers: Mapping[str, Resolver] | None = None,
 ) -> FastAPI:
     """The API. ``cells`` None reaches each org's cell through ``settings.cells`` (none when
     that is empty), and ``cell_stores`` None its bucket through
@@ -90,6 +92,7 @@ def create_app(  # noqa: PLR0913  (the ports a test replaces, by keyword)
     owned_github = github_for(settings) if github is None else None
     db = engine if engine is not None else make_engine(settings.database_dsn)
     owned_cells = cells_for(settings, db) if cells is None else None
+    owned_resolvers = doh_resolvers() if resolvers is None else None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -102,6 +105,9 @@ def create_app(  # noqa: PLR0913  (the ports a test replaces, by keyword)
             await owned_github.aclose()
         if owned_cells is not None:
             await owned_cells.aclose()
+        for resolver in (owned_resolvers or {}).values():
+            if isinstance(resolver, DohResolver):
+                await resolver.aclose()
         if isinstance(rt, Runtime) and rt.owns_engine:
             await rt.engine.dispose()
 
@@ -136,6 +142,7 @@ def create_app(  # noqa: PLR0913  (the ports a test replaces, by keyword)
         snapshot=Snapshots(db, blob_store=store, cell_stores=buckets),
         cells=cells if cells is not None else owned_cells,
         github=github if github is not None else owned_github,
+        resolvers=resolvers if resolvers is not None else owned_resolvers or {},
     )
     # Added first so it runs inside RequestIdMiddleware: its problem carries the request id.
     # The bundle upload, the GitHub webhook and the agent interface keep their own limits.

@@ -46,6 +46,7 @@ from ssc_contracts.errors import CATALOGUE, ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_control.audit import Actor, NewEvent, append_event
 from ssc_control.db.bind import bound_org
+from ssc_control.db.orgs import suffix_of
 from ssc_control.deploy.bundle_gc import lock_bundle_key
 from ssc_control.deploy.bundles import (
     DIGEST_PREFIX,
@@ -79,7 +80,7 @@ SOURCE_UNAVAILABLE: Final = "SOURCE_UNAVAILABLE"
 READ_CHUNK: Final = 1024 * 1024
 
 _SELECT_CONTEXT = text(
-    "select a.status, a.slug, o.cell_label, e.id as preview_id, l.installation_id, "
+    "select a.status, a.slug, o.cell_label, o.apps_suffix, e.id as preview_id, l.installation_id, "
     "l.repository_id, l.repository from ssc.repo_link l "
     "join ssc.app a on a.org_id = l.org_id and a.id = l.app_id "
     "join ssc.org o on o.id = l.org_id "
@@ -239,7 +240,9 @@ async def _context(
     url = (
         None
         if slug_problem(slug) is not None
-        else app_origin(slug, PREVIEW, str(row["cell_label"]), ports.apps_domain)
+        else app_origin(
+            slug, PREVIEW, suffix_of(str(row["cell_label"]), row["apps_suffix"], ports.apps_domain)
+        )
     )
     return _Push(
         ports=ports,

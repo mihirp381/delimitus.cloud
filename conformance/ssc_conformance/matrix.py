@@ -5,7 +5,7 @@ One line per row of architecture section 3 (all 17): the proofs behind it and to
 which is pass, fail, skipped with its reason, or not automated. Every job writes an evidence file
 (``ssc_conformance.evidence``); this merges them. Below the rows, "also checked tonight" lists
 what is nightly but is no row (drift repair, the certificate, the kill drill, the read-only
-matrix against the data gateway).
+matrix against the data gateway, the walk of every suffix).
 
 Rules, which keep a night honest:
 
@@ -45,6 +45,7 @@ DRIFT: Final = "drift"
 CERTIFICATE: Final = "certificate"
 DRILL: Final = "drill"
 DATAGW_READ_ONLY: Final = "datagw_read_only"
+SUFFIXES: Final = "suffixes"
 CROSS_CELL: Final = frozenset({"cannot_reach_peer_cell", "deny_peer_cell", BROWSER_CROSS_CELL})
 NOT_AUTOMATED: Final = "not automated"
 
@@ -97,12 +98,13 @@ ROWS: Final = (
     Row("Misconfiguration by us", (ORG_POLICIES,)),
     Row("Our own staff", (STAFF,)),
 )
-ALSO: Final = (DRIFT, CERTIFICATE, DRILL, DATAGW_READ_ONLY)
+ALSO: Final = (DRIFT, CERTIFICATE, DRILL, DATAGW_READ_ONLY, SUFFIXES)
 ALSO_TITLES: Final = {
     DRIFT: "Drift repaired within a minute",
     CERTIFICATE: "Certificate has 21 days or more left",
     DRILL: "Kill switch drill (SSC-054)",
     DATAGW_READ_ONLY: "Read-only matrix against the data gateway (SSC-051)",
+    SUFFIXES: "Every suffix of the org: hosts, certificates 14+ days, CAA (CD-7)",
 }
 
 

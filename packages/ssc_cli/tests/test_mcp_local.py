@@ -179,6 +179,7 @@ async def test_tools_mirror_the_api_server(fake_api):
         theirs = {t.name: t for t in (await remote.list_tools()).tools}
     assert set(mine) == set(theirs) == set(TOOLS) == set(server_tools.TOOLS)
     assert not {"approve", "promote"} & set(mine)
+    assert not [name for name in {*mine, *theirs} if "domain" in name]
     for name in TOOLS:
         assert mine[name].annotations == theirs[name].annotations, name
         if name not in {"deploy", "preflight"}:

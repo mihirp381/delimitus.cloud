@@ -12,7 +12,7 @@ from typing import Any, Final, cast
 
 from ssc_datagw.kinds import Target, TargetError, parse_target
 from ssc_datagw.resolver import PUBLIC_RESOLVERS
-from ssc_shared.hosts import check_apps_domain, check_cell_label
+from ssc_shared.hosts import check_cell_label
 
 MAX_STALE_SECONDS: Final = 120.0
 """The snapshot age past which every query is refused with ``DATA_SNAPSHOT_STALE``."""
@@ -40,13 +40,11 @@ class Settings:
     (GA-5.8); without it only apps call the gateway."""
 
     org_id: str
-    cell_label: str
     project_id: str
     bucket: str
     audience: str
     jwks: Mapping[str, Any]
     issuer: str
-    apps_domain: str
     max_stale: float = MAX_STALE_SECONDS
     agent_account: str | None = None
     resolvers: tuple[str, ...] = PUBLIC_RESOLVERS
@@ -147,7 +145,6 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         raise SettingsError("SSC_DATAGW_AUDIENCE must be an https URL")
     try:
         label = check_cell_label(_need(env, "SSC_CELL_LABEL"))
-        apps_domain = check_apps_domain(env.get("SSC_APPS_DOMAIN", "delimitusapps.com"))
         max_stale = float(env.get("SSC_SNAPSHOT_MAX_AGE", MAX_STALE_SECONDS))
     except ValueError as exc:
         raise SettingsError(str(exc)) from exc
@@ -155,13 +152,11 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         raise SettingsError(f"SSC_SNAPSHOT_MAX_AGE is above 0 and at most {MAX_STALE_SECONDS:g}")
     return Settings(
         org_id=org_id,
-        cell_label=label,
         project_id=project_id,
         bucket=_need(env, "SSC_CELL_BUCKET"),
         audience=audience,
         jwks=_jwks(_need(env, "SSC_IDENTITY_JWKS")),
         issuer=env.get("SSC_IDENTITY_ISSUER", f"https://keys.delimitus.com/{label}"),
-        apps_domain=apps_domain,
         max_stale=max_stale,
         agent_account=_agent_account(env, project_id),
         resolvers=_resolvers(env),

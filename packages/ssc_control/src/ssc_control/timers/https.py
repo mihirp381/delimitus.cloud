@@ -4,9 +4,11 @@ A timer call enters the cell as a browser does: ``https://<app host><path>``, th
 balancer, the gateway. There is no other way in. Each request carries a schedule token
 (``ssc_contracts.schedule_token``) signed with the worker's timer key, bound to that origin,
 method and path as sent on the wire (percent-encoded as the client encodes it), which the
-gateway verifies and strips. Redirects are never followed, so a
-redirect is the run's answer (``http_error``). The answer's body is read to its end and dropped,
-so the run lasts until the app has finished answering.
+gateway verifies and strips. Redirects are not followed, so a redirect is the run's answer
+(``http_error``), except one ``307`` from a previous suffix (CD-4.3) to the same host label and
+path under the org's other suffix (its default or its own domain), which is sent once more with
+a token for that origin. The answer's
+body is read to its end and dropped, so the run lasts until the app has finished answering.
 
 The key is an EC P-256 private key from ``SSC_TIMER_SIGNING_KEY`` (PEM) with its id in
 ``SSC_TIMER_KEY_ID``; its public JWKS (:meth:`ScheduleSigner.jwks`, ``python -m
@@ -21,6 +23,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
+from urllib.parse import urlsplit
 
 import httpx2
 import jwt
@@ -36,8 +39,10 @@ from ssc_contracts.schedule_token import (
     SCHEDULE_TOKEN_TYP,
     START_SUFFIX,
 )
+from ssc_contracts.snapshot import check_suffix
+from ssc_control.db.orgs import suffix_of
 from ssc_control.timers.dispatch import DispatchResult, ScheduleDispatcher, TimerCall
-from ssc_shared.hosts import app_origin, slug_problem
+from ssc_shared.hosts import app_origin, default_suffix, slug_problem
 
 log = logging.getLogger(__name__)
 
@@ -121,7 +126,8 @@ class HttpsScheduleDispatcher(ScheduleDispatcher):
         if slug_problem(call.slug) is not None:
             return None
         try:
-            return app_origin(call.slug, call.environment, call.cell_label, self._apps_domain)
+            suffix = suffix_of(call.cell_label, call.apps_suffix, self._apps_domain)
+            return app_origin(call.slug, call.environment, suffix)
         except ValueError:
             return None
 
@@ -136,19 +142,14 @@ class HttpsScheduleDispatcher(ScheduleDispatcher):
         if origin is None:
             log.warning("timer call has no app host", extra={"run_id": call.run_id})
             return DispatchResult(error="dispatch_error")
-        url = httpx2.URL(origin + path)
-        sent = url.raw_path.decode("ascii")
-        token = self._signer.token(call, origin=origin, method=method, path=sent, jti=jti)
+        sent = httpx2.URL(origin + path).raw_path.decode("ascii")
         try:
-            async with self._client.stream(
-                method,
-                url,
-                headers={SCHEDULE_TOKEN_HEADER: token},
-                content=b"" if method == "POST" else None,
-            ) as answer:
-                async for _ in answer.aiter_raw():
-                    pass
-                return DispatchResult(http_status=answer.status_code)
+            status, location = await self._once(call, method, origin, sent, jti)
+            suffixes = {default_suffix(call.cell_label, self._apps_domain), call.domain_suffix}
+            moved = _moved_origin(origin, sent, location, suffixes) if status == 307 else None  # noqa: PLR2004
+            if moved is not None:
+                status, _ = await self._once(call, method, moved, sent, jti)
+            return DispatchResult(http_status=status)
         except httpx2.HTTPError as exc:
             log.warning(
                 "timer call got no answer",
@@ -156,8 +157,46 @@ class HttpsScheduleDispatcher(ScheduleDispatcher):
             )
             return DispatchResult(error="dispatch_error")
 
+    async def _once(  # noqa: PLR0913
+        self, call: TimerCall, method: str, origin: str, sent: str, jti: str
+    ) -> tuple[int, str | None]:
+        token = self._signer.token(call, origin=origin, method=method, path=sent, jti=jti)
+        async with self._client.stream(
+            method,
+            httpx2.URL(origin + sent),
+            headers={SCHEDULE_TOKEN_HEADER: token},
+            content=b"" if method == "POST" else None,
+        ) as answer:
+            async for _ in answer.aiter_raw():
+                pass
+            return answer.status_code, answer.headers.get("location")
+
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+def _moved_origin(
+    origin: str, sent: str, location: str | None, suffixes: set[str | None]
+) -> str | None:
+    """The origin a previous suffix's ``307`` names: the same host label and path under another
+    of the org's ``suffixes``; None for any other redirect."""
+    if location is None:
+        return None
+    to, was = urlsplit(location), urlsplit(origin)
+    first = (was.hostname or "").split(".", 1)[0]
+    host = to.hostname or ""
+    label, _, suffix = host.partition(".")
+    if to.scheme != "https" or to.port is not None or to.username or label != first:
+        return None
+    if host == was.hostname or to.path + (f"?{to.query}" if to.query else "") != sent:
+        return None
+    if suffix not in suffixes:
+        return None
+    try:
+        check_suffix(suffix)
+    except ValueError:
+        return None
+    return f"https://{host}"
 
 
 def new_timer_pem() -> bytes:

@@ -1,10 +1,12 @@
 """SSC-041: the HTTPS timer dispatcher and its key, against a mock transport. Each request
 carries a token the gateway's own verifier admits for exactly that request; redirects are
-answers, not followed; no answer is ``dispatch_error``, logged without the token."""
+answers, not followed, but for one 307 from a previous suffix (CD-4.3); no answer is
+``dispatch_error``, logged without the token."""
 
 import json
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import replace
 
 import httpx2
 import pytest
@@ -35,6 +37,7 @@ CALL = TimerCall(
     environment="prod",
     cell_label=LABEL,
     health_path="/healthz",
+    domain_suffix="tools.testorg.com",
 )
 ORIGIN = f"https://ledger.{LABEL}.{DOMAIN}"
 
@@ -160,6 +163,96 @@ async def test_a_redirect_or_an_error_status_is_the_answer(
     assert await d.dispatch(CALL) == DispatchResult(http_status=status)
     await d.aclose()
     assert len(seen) == 1
+
+
+MOVED = "https://ledger.tools.testorg.com"
+
+
+def answering(
+    signer: ScheduleSigner, answers: list[httpx2.Response], seen: list[httpx2.Request]
+) -> HttpsScheduleDispatcher:
+    async def body() -> AsyncIterator[bytes]:
+        yield b""
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request)
+        answer = answers.pop(0)
+        return httpx2.Response(answer.status_code, headers=answer.headers, content=body())
+
+    return HttpsScheduleDispatcher(
+        signer, apps_domain=DOMAIN, transport=httpx2.MockTransport(handle)
+    )
+
+
+async def test_a_redirect_from_a_previous_suffix_is_sent_once_more(signer: ScheduleSigner) -> None:
+    seen: list[httpx2.Request] = []
+    moved = httpx2.Response(307, headers={"location": MOVED + "/tasks/tick?full=1"})
+    d = answering(signer, [moved, httpx2.Response(204)], seen)
+    assert await d.dispatch(CALL) == DispatchResult(http_status=204)
+    first, again = seen
+    assert str(first.url) == ORIGIN + "/tasks/tick?full=1"
+    assert str(again.url) == MOVED + "/tasks/tick?full=1"
+    claims = gateway(signer).verify(
+        again.headers[SCHEDULE_TOKEN_HEADER],
+        origin=MOVED,
+        org=CALL.org_id,
+        method="POST",
+        path="/tasks/tick?full=1",
+    )
+    assert claims is not None and claims.jti == CALL.run_id
+
+    seen.clear()
+    back = httpx2.Response(307, headers={"location": ORIGIN + "/tasks/tick?full=1"})
+    d = answering(signer, [moved, back], seen)
+    assert await d.dispatch(CALL) == DispatchResult(http_status=307)
+    assert len(seen) == 2
+    await d.aclose()
+
+
+async def test_a_flip_back_redirect_goes_to_the_default_suffix(signer: ScheduleSigner) -> None:
+    seen: list[httpx2.Request] = []
+    on_domain = replace(CALL, apps_suffix="tools.testorg.com")
+    back = httpx2.Response(307, headers={"location": ORIGIN + "/tasks/tick?full=1"})
+    d = answering(signer, [back, httpx2.Response(204)], seen)
+    assert await d.dispatch(on_domain) == DispatchResult(http_status=204)
+    assert [str(r.url) for r in seen] == [
+        MOVED + "/tasks/tick?full=1",
+        ORIGIN + "/tasks/tick?full=1",
+    ]
+    await d.aclose()
+
+
+async def test_no_own_domain_means_no_second_call(signer: ScheduleSigner) -> None:
+    seen: list[httpx2.Request] = []
+    moved = httpx2.Response(307, headers={"location": MOVED + "/tasks/tick?full=1"})
+    d = answering(signer, [moved], seen)
+    no_domain = replace(CALL, domain_suffix=None)
+    assert await d.dispatch(no_domain) == DispatchResult(http_status=307)
+    assert len(seen) == 1
+    await d.aclose()
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "https://payroll.tools.testorg.com/tasks/tick?full=1",
+        MOVED + "/tasks/other",
+        MOVED + "/tasks/tick",
+        "http://ledger.tools.testorg.com/tasks/tick?full=1",
+        "https://ledger.tools.testorg.com:8443/tasks/tick?full=1",
+        "https://ledger.localhost/tasks/tick?full=1",
+        "https://ledger.tools.elsewhere.com/tasks/tick?full=1",
+        "https://ledger.169.254.169.254.nip.io/tasks/tick?full=1",
+        ORIGIN + "/tasks/tick?full=1",
+        "/tasks/tick?full=1",
+    ],
+)
+async def test_any_other_307_is_the_answer(signer: ScheduleSigner, location: str) -> None:
+    seen: list[httpx2.Request] = []
+    d = answering(signer, [httpx2.Response(307, headers={"location": location})], seen)
+    assert await d.dispatch(CALL) == DispatchResult(http_status=307)
+    assert len(seen) == 1
+    await d.aclose()
 
 
 async def test_no_answer_is_a_dispatch_error_logged_without_the_token(

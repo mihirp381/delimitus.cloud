@@ -584,6 +584,16 @@ def test_the_onboarding_tick_runs_every_five_minutes_unless_the_env_says_otherwi
     ) == {60.0}
 
 
+def test_the_domains_tick_runs_every_minute() -> None:
+    app = build_app("postgresql://ssc_app@localhost/ssc")
+    assert periods(app, "domains:tick") == {60.0}
+    ((periodic,),) = [
+        [p for key, p in app.periodic_registry.periodic_tasks.items() if key[0] == "domains:tick"]
+    ]
+    assert periodic.periodic_id == "domains_tick"
+    assert periodic.configure_kwargs.get("queueing_lock") == "domains_tick"
+
+
 def test_default_timings_repair_within_a_minute() -> None:
     settings = WorkerSettings()
     app = build_app("postgresql://ssc_app@localhost/ssc", settings=settings)

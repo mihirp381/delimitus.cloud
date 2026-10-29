@@ -337,6 +337,87 @@ def test_a_bad_egress_member_is_refused(bad: dict[str, Any]) -> None:
         AccessView.from_document(json.dumps(doc(egress=egress(**bad))))
 
 
+def test_the_suffix_members_are_optional_and_reach_the_view_byte_for_byte() -> None:
+    plain = SnapshotDoc.model_validate(doc()).model_dump(mode="json")
+    assert "suffix" not in plain and "previous_suffixes" not in plain
+    assert (view().suffix, view().previous_suffixes) == (None, ())
+    raw = doc(
+        suffix="tools.testorg.com",
+        previous_suffixes=[
+            {"suffix": "k7q2m9xa.apps.test", "until": "2026-11-01T00:00:00Z"},
+            {"suffix": "a.testorg.com", "until": "2026-12-01T00:00:00Z"},
+            {"suffix": "b.testorg.com", "until": "2026-12-01T00:00:00Z"},
+        ],
+    )
+    parsed = SnapshotDoc.model_validate(raw)
+    assert canonical_bytes(parsed.model_dump(mode="json")) == canonical_bytes(raw)
+    found = AccessView.from_document(raw)
+    assert found.suffix == "tools.testorg.com"
+    assert [p.suffix for p in found.previous_suffixes] == [
+        "k7q2m9xa.apps.test",
+        "a.testorg.com",
+        "b.testorg.com",
+    ]
+
+
+def _retired(*names: str) -> list[dict[str, str]]:
+    return [{"suffix": n, "until": "2026-11-01T00:00:00Z"} for n in names]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"suffix": "testorg.com"},
+        {"suffix": "Tools.testorg.com"},
+        {"suffix": "a" * 200 + ".b.c"},
+        {"previous_suffixes": []},
+        {"previous_suffixes": _retired("b.testorg.com", "a.testorg.com")},
+        {"previous_suffixes": _retired("a.testorg.com", "a.testorg.com")},
+        {"previous_suffixes": _retired(*(f"s{n}.testorg.com" for n in range(9)))},
+        {"previous_suffixes": [{"suffix": "a.testorg.com", "until": "2026-11-01T00:00:00"}]},
+        {"suffix": "a.testorg.com", "previous_suffixes": _retired("a.testorg.com")},
+        {"previous_suffixes": [{"suffix": "a.testorg.com"}]},
+    ],
+)
+def test_a_bad_suffix_member_is_refused(bad: dict[str, Any]) -> None:
+    with pytest.raises(SnapshotInvalidError):
+        AccessView.from_document(json.dumps(doc(**bad)))
+
+
+def test_form_targets_are_optional_and_reach_the_view_byte_for_byte() -> None:
+    assert "form_targets" not in SnapshotDoc.model_validate(doc()).model_dump(mode="json")
+    nulled = SnapshotDoc.model_validate(doc(form_targets=None))
+    assert "form_targets" not in nulled.model_dump(mode="json")
+    assert view().form_targets == {}
+    raw = doc(form_targets={PROD: ["https://pay.example.com", "https://sso.testorg.com"]})
+    parsed = SnapshotDoc.model_validate(raw)
+    assert canonical_bytes(parsed.model_dump(mode="json")) == canonical_bytes(raw)
+    found = AccessView.from_document(json.dumps(raw)).form_targets
+    assert found == {PROD: ("https://pay.example.com", "https://sso.testorg.com")}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {PROD: []},
+        {PROD: ["https://b.example.com", "https://a.example.com"]},
+        {PROD: ["https://a.example.com", "https://a.example.com"]},
+        {PROD: [f"https://s{n:02d}.example.com" for n in range(21)]},
+        {"env_" + "x" * 20: ["https://a.example.com"]},
+        {PROD: ["http://a.example.com"]},
+        {PROD: ["https://a.example.com/"]},
+        {PROD: ["https://a.example.com:8443"]},
+        {PROD: ["https://A.example.com"]},
+        {PROD: ["https://localhost"]},
+        {PROD: ["https://user@a.example.com"]},
+        {PROD: ["a.example.com"]},
+    ],
+)
+def test_a_bad_form_targets_member_is_refused(bad: dict[str, Any]) -> None:
+    with pytest.raises(SnapshotInvalidError):
+        AccessView.from_document(json.dumps(doc(form_targets=bad)))
+
+
 def test_the_view_is_read_only() -> None:
     v = view()
     with pytest.raises(TypeError):

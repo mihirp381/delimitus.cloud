@@ -21,6 +21,7 @@ from ssc_control.api.routes.v1.apps import app_url
 from ssc_control.api.routes.v1.common import Strict
 from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW
+from ssc_control.db.orgs import suffix_of
 from ssc_control.names import REMOVED_GROUP, groups, people
 from ssc_control.snapshot.compiler import compile_document
 from ssc_shared.access import AccessView, GrantRef, decide
@@ -72,7 +73,7 @@ RESPONSES: Final = problem_responses(
 
 _STATUS = text("select status from ssc.user_account where org_id = :org and id = :id")
 _APPS = text(
-    "select a.id, a.slug, a.status, a.owner_user_id, o.cell_label from ssc.app a "
+    "select a.id, a.slug, a.status, a.owner_user_id, o.cell_label, o.apps_suffix from ssc.app a "
     "join ssc.org o on o.id = a.org_id "
     "where a.org_id = :org and a.status <> 'deleted' order by a.slug collate \"C\""
 )
@@ -135,7 +136,11 @@ async def user_apps(uow: UnitOfWork, user_id: str, apps_domain: str) -> UserApps
                     UserAppEnvironment(
                         environment_id=env_id,
                         name=name,
-                        url=app_url(r["slug"], name, r["cell_label"], apps_domain),
+                        url=app_url(
+                            r["slug"],
+                            name,
+                            suffix_of(r["cell_label"], r["apps_suffix"], apps_domain),
+                        ),
                         role=role,
                         via=[AccessVia(kind=g.subject_kind, name=via_name(g)) for g in via],
                     )

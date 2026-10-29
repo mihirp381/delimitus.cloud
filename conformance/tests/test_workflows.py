@@ -122,6 +122,15 @@ def test_artifacts_hold_evidence_and_the_page_only() -> None:
             assert set(paths) <= UPLOADS, f"{name}: {paths}"
 
 
+def test_the_suffix_walk_runs_in_every_probes_job_even_after_a_failed_probe() -> None:
+    probes = jobs("nightly.yml")["probes"]
+    start = probes.index("      - name: Suffix walk")
+    step = probes[start : start + 5]
+    assert "        if: ${{ !cancelled() }}" in step
+    assert "        run: uv run python -m ssc_conformance.suffix_walk" in step
+    assert start < probes.index("      - name: Evidence")
+
+
 def test_the_password_is_a_step_level_variable_only() -> None:
     for name in NIGHT_FILES:
         for line in code(name):

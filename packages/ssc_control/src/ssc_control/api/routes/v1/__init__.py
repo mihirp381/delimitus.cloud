@@ -20,7 +20,9 @@ from ssc_control.api.routes.v1.connections import router as connections_router
 from ssc_control.api.routes.v1.databases import router as databases_router
 from ssc_control.api.routes.v1.deployment_policy import router as deployment_policy_router
 from ssc_control.api.routes.v1.deployments import router as deployments_router
+from ssc_control.api.routes.v1.domains import router as domains_router
 from ssc_control.api.routes.v1.egress import router as egress_router
+from ssc_control.api.routes.v1.form_targets import router as form_targets_router
 from ssc_control.api.routes.v1.github import router as github_router
 from ssc_control.api.routes.v1.github import webhook_router as github_webhook_router
 from ssc_control.api.routes.v1.grants import router as grants_router
@@ -67,3 +69,5 @@ router.include_router(egress_router)
 router.include_router(connections_router)
 router.include_router(connection_requests_router)
 router.include_router(warm_router)
+router.include_router(domains_router)
+router.include_router(form_targets_router)

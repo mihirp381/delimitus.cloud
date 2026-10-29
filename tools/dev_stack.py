@@ -15,7 +15,10 @@ the environment wins.
 
 ``serve --worker`` also runs the worker in the same process, with the fake builder and runtime
 (``SSC_BUILD_DRIVER`` and ``SSC_RUNTIME_DRIVER`` default to ``fake``), so ``ssc deploy`` goes all
-the way to a healthy deployment locally. Nothing is built or run: the fakes only record.
+the way to a healthy deployment locally. Nothing is built or run: the fakes only record. With the
+fake runtime, the API and the worker share a fake cell agent for customer domains and fake public
+resolvers, both read from ``<dir>/fake-domains.json``, which ``fake-dns`` and
+``fake-certificate`` write; ``domains-tick`` runs one delegation tick against them.
 
 Tokens name the issuer ``https://dev.invalid``, which a real API never trusts. The API itself is
 unchanged: it only verifies tokens against the JWKS it is given.
@@ -46,6 +49,8 @@ import shlex
 import signal
 import socket
 import sys
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -57,6 +62,7 @@ from psycopg import sql
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ssc_contracts.audit import ActorKind
+from ssc_contracts.domains import CertificateState
 from ssc_control import worker
 from ssc_control.api import Settings, create_app
 from ssc_control.audit.chain import Actor
@@ -70,6 +76,8 @@ from ssc_control.db import (
     make_engine,
     upgrade,
 )
+from ssc_control.domains import tick as domains_tick
+from ssc_control.domains.probe import DOH_ENDPOINTS, Resolver
 from ssc_control.identity import connections
 from ssc_control.identity.__main__ import run_sync
 from ssc_control.identity.authhost import AuthHost, create_auth_app
@@ -78,6 +86,12 @@ from ssc_control.identity.connections import directory_issuer
 from ssc_control.identity.settings import AuthSettings
 from ssc_control.identity.tokens import Signer
 from ssc_control.identity.workos import WorkOSClient
+from ssc_control.runtime.cell_domains import (
+    FAKE_NAME_SERVERS,
+    DomainStatus,
+    FakeCellDomains,
+)
+from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.worker_ports import Ports
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -91,6 +105,7 @@ DEV_OPERATOR = "op_dev"
 DEV_CONSOLE_URL = "http://localhost:5173"
 WORKOS_ENV = ("SSC_WORKOS_API_KEY", "SSC_WORKOS_CLIENT_ID")
 STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+FAKE_DOMAINS = "fake-domains.json"
 
 
 def _testkit() -> ModuleType:
@@ -241,6 +256,72 @@ def mint(  # noqa: PLR0913  (each is a token claim)
     )
 
 
+# ── fake customer domains ────────────────────────────────────────────────────
+
+
+def _fake_domains(d: Path) -> dict[str, dict[str, Any]]:
+    path = d / FAKE_DOMAINS
+    found = json.loads(path.read_text()) if path.exists() else {}
+    return {"dns": found.get("dns", {}), "certificates": found.get("certificates", {})}
+
+
+def set_fake_domain(
+    d: Path,
+    *,
+    dns: tuple[str, list[str]] | None = None,
+    certificate: tuple[str, str, str | None] | None = None,
+) -> None:
+    state = _fake_domains(d)
+    if dns is not None:
+        state["dns"][dns[0]] = dns[1]
+    if certificate is not None:
+        state["certificates"][certificate[0]] = {"state": certificate[1], "detail": certificate[2]}
+    _write_private(d / FAKE_DOMAINS, json.dumps(state, indent=2, sort_keys=True).encode())
+
+
+@dataclass(frozen=True, slots=True)
+class FileResolver(Resolver):
+    d: Path
+
+    async def ns(self, name: str) -> frozenset[str]:
+        return frozenset(_fake_domains(self.d)["dns"].get(name, ()))
+
+
+@dataclass(slots=True, kw_only=True)
+class FileCellDomains(FakeCellDomains):
+    d: Path
+
+    async def status(self, suffix: str) -> DomainStatus:
+        cert = _fake_domains(self.d)["certificates"].get(suffix) or {}
+        state: CertificateState = cert.get("state", "provisioning")
+        return DomainStatus(name_servers=FAKE_NAME_SERVERS, state=state, detail=cert.get("detail"))
+
+
+def file_resolvers(d: Path) -> dict[str, Resolver]:
+    return {name: FileResolver(d) for name in DOH_ENDPOINTS}
+
+
+def fake_domain_ports(d: Path, ports: Ports) -> tuple[Ports, StaticCells]:
+    """The worker's ports and the API's cells, sharing the file-driven domain fakes."""
+    domains = FileCellDomains(d=d)
+    cell = ports.cells.cell if isinstance(ports.cells, StaticCells) else OrgCell(label=STATIC_LABEL)
+    worker_cell = replace(cell, domains=domains)
+    shared = replace(ports, cells=StaticCells(worker_cell), resolvers=file_resolvers(d))
+    return shared, StaticCells(OrgCell(label=STATIC_LABEL, domains=domains))
+
+
+def tick_domains(d: Path) -> domains_tick.TickReport:
+    async def go() -> domains_tick.TickReport:
+        engine = make_engine(load_state(d)["database_dsn"])
+        try:
+            cells = StaticCells(OrgCell(label=STATIC_LABEL, domains=FileCellDomains(d=d)))
+            return await domains_tick.tick(engine, cells, file_resolvers(d), datetime.now(UTC))
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(go())
+
+
 # ── serve ────────────────────────────────────────────────────────────────────
 
 
@@ -289,12 +370,17 @@ def serve(  # noqa: PLR0913, PLR0917  (each is a command line option)
     url = f"http://{shown}:{bound}"
     env.setdefault("SSC_API_PUBLIC_URL", url)
     settings = Settings.from_env(env)
-    server = uvicorn.Server(uvicorn.Config(create_app(settings), log_level="warning"))
     if not with_worker:
+        server = uvicorn.Server(uvicorn.Config(create_app(settings), log_level="warning"))
         print(f"SSC_API_URL={url}", flush=True)  # noqa: T201
         server.run(sockets=[sock])
         return
     ports = worker.compose_ports(env)
+    cells: StaticCells | None = None
+    if env.get(worker.RUNTIME_DRIVER_ENV) == "fake":
+        ports, cells = fake_domain_ports(d, ports)
+    app = create_app(settings, cells=cells, resolvers=ports.resolvers if cells else None)
+    server = uvicorn.Server(uvicorn.Config(app, log_level="warning"))
     print(f"SSC_API_URL={url}", flush=True)  # noqa: T201
     asyncio.run(_serve_with_worker(server, sock, ports, env[worker.DSN_ENV]))
 
@@ -437,6 +523,32 @@ def sso_org(d: Path, args: argparse.Namespace) -> str:
 # ── command line ─────────────────────────────────────────────────────────────
 
 
+FAKE_DOMAIN_COMMANDS = ("fake-dns", "fake-certificate", "domains-tick")
+
+
+def _add_fake_domain_commands(sub: Any) -> None:
+    p_dns = sub.add_parser("fake-dns", help="what the fake resolvers answer for a name's NS")
+    p_dns.add_argument("name")
+    p_dns.add_argument("ns", nargs="*")
+
+    p_cert = sub.add_parser("fake-certificate", help="a customer domain's fake certificate state")
+    p_cert.add_argument("suffix")
+    p_cert.add_argument("state", choices=["provisioning", "active", "failed"])
+    p_cert.add_argument("--detail")
+
+    sub.add_parser("domains-tick", help="one delegation tick against the fakes")
+
+
+def _run_fake_domain_command(d: Path, args: argparse.Namespace) -> None:
+    if args.command == "fake-dns":
+        set_fake_domain(d, dns=(args.name, args.ns))
+    elif args.command == "fake-certificate":
+        set_fake_domain(d, certificate=(args.suffix, args.state, args.detail))
+    else:
+        report = tick_domains(d)
+        print(json.dumps({"checked": report.checked, "changed": list(report.changed)}))  # noqa: T201
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dir", type=Path, default=DEFAULT_DIR, help="state folder")
@@ -480,6 +592,8 @@ def main(argv: list[str] | None = None) -> None:
     p_sso.add_argument("--org-name", default="SSO org")
     p_sso.add_argument("--admin-group")
 
+    _add_fake_domain_commands(sub)
+
     args = parser.parse_args(argv)
     d: Path = args.dir.resolve()
     if args.command == "up":
@@ -499,6 +613,8 @@ def main(argv: list[str] | None = None) -> None:
         )
     elif args.command == "auth":
         auth(d, args.host, args.port, args.public_url, args.console_url)
+    elif args.command in FAKE_DOMAIN_COMMANDS:
+        _run_fake_domain_command(d, args)
     elif args.command == "sso-org":
         print(f"SSC_ORG_ID={sso_org(d, args)}")  # noqa: T201
     else:

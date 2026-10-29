@@ -15,8 +15,8 @@ const APP = {
   status: 'active',
   created_at: '2026-09-28T10:00:00Z',
   environments: [
-    { id: 'env_preview0000000000000', name: 'preview', config_version: 1, grants_version: 0, current_deployment_id: null },
-    { id: 'env_prod0000000000000000', name: 'prod', config_version: 2, grants_version: 3, current_deployment_id: 'dep_eeeeeeeeeeeeeeeeeeee' },
+    { id: 'env_preview0000000000000', name: 'preview', config_version: 1, form_targets: [], grants_version: 0, current_deployment_id: null },
+    { id: 'env_prod0000000000000000', name: 'prod', config_version: 2, form_targets: [], grants_version: 3, current_deployment_id: 'dep_eeeeeeeeeeeeeeeeeeee' },
   ],
 } as const;
 const PROD_GRANTS = `/v1/apps/${APP.id}/environments/env_prod0000000000000000/grants`;

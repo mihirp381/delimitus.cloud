@@ -8,6 +8,7 @@ never ``notifications.jobs``.
 """
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Final
 
 from sqlalchemy import text
@@ -23,6 +24,10 @@ _APPROVERS = text(
     "select u.id from ssc.user_account u where u.org_id = :org and u.status = 'active' "
     "and (u.role = 'admin' or (u.id <> :requester and u.id = (select c.owner_user_id "
     "from ssc.connection c where c.org_id = :org and c.name = :connection))) order by u.id"
+)
+_ADMINS = text(
+    "select id from ssc.user_account where org_id = :org and status = 'active' "
+    "and role = 'admin' order by id"
 )
 _INSERT = text(
     "insert into ssc.notification_outbox (id, org_id, user_id, kind, approval_id, dedupe_key) "
@@ -104,4 +109,19 @@ async def decided(
         approval_id=approval_id,
         recipients=[requester_id],
         key=f"decided:{approval_id}",
+    )
+
+
+async def domain_changed(
+    conn: AsyncConnection, *, org_id: str, domain_id: str, kind: str, at: datetime
+) -> int:
+    """Tell every active admin that the org's own address went ``active`` or ``failed``."""
+    admins = list((await conn.execute(_ADMINS, {"org": org_id})).scalars())
+    return await queue(
+        conn,
+        org_id=org_id,
+        kind=kind,
+        approval_id=None,
+        recipients=admins,
+        key=f"{kind}:{domain_id}:{at.isoformat()}",
     )

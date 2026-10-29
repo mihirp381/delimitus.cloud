@@ -491,6 +491,10 @@ def test_pack_names_the_helpers_as_they_are_published(cli, tmp_path):
     for name in named:
         assert "private" not in node[name], name
         assert f"Node {node[name]['engines']['node'].removeprefix('>=')} or newer" in agents
+    floor = "`ssc-app` and `@delimitus/ssc-identity` 0.0.6 or newer"
+    assert floor in agents
+    for version in (project["version"], node["@delimitus/ssc-identity"]["version"]):
+        assert tuple(map(int, version.split("."))) >= (0, 0, 6), version
 
 
 def test_pack_says_how_an_app_reads_a_data_connection(cli, tmp_path):
@@ -594,7 +598,9 @@ def test_init_help_names_every_file_it_writes(cli) -> None:
 def test_the_identity_rules_read_both_settings_from_the_environment() -> None:
     text = " ".join(guide([], MCP_URL).split())
     assert f'os.environ["{app_env.IDENTITY_KEYS_URL}"]' in text
-    assert f'os.environ["{app_env.APP_ORIGIN}"]' in text
+    assert f'os.environ["{app_env.APP_ENV_ID}"]' in text
+    assert f'os.environ["{app_env.APP_ORIGIN}"]' not in text
+    assert f"`{app_env.APP_ORIGIN}` is the app's own address" in text
     assert "a `data:` URL" in text
     jwks = text.split("keys.delimitus.com/<cell>/jwks.json", 1)[0][-160:]
     assert "outside a cell" in jwks

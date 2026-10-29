@@ -76,7 +76,9 @@ def test_a_second_user_case_moves_to_its_own_group() -> None:
     )
 
 
-@pytest.mark.parametrize("describe", ["fail closed", "the nightly sign-in"])
+@pytest.mark.parametrize(
+    "describe", ["fail closed", "the nightly sign-in", "form targets and ended sessions"]
+)
 def test_rig_only_cases_are_not_part_of_a_night(describe: str) -> None:
     found = by_proof(browser.results(report(**{describe: [case("z", "skipped", "needs the rig")]})))
     assert matrix.BROWSER_LOGIN not in found

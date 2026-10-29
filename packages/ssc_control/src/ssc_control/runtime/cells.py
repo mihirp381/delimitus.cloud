@@ -25,7 +25,7 @@ import json
 import logging
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from types import MappingProxyType
 from typing import Final, Literal, Protocol, cast, get_args, runtime_checkable
 
@@ -34,11 +34,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ssc_control.db.bind import bound_org
+from ssc_control.db.domains import suffix_list
 from ssc_control.deploy.build_driver import BuildDriver
 from ssc_control.deploy.cell_build import CellAgentBuildDriver
 from ssc_control.runtime.app_databases import AppDatabases, CellAppDatabases
 from ssc_control.runtime.cell_agent import CellAgentDriver, IdTokens
 from ssc_control.runtime.cell_datagw import AgentCellSchemas, CellSchemas
+from ssc_control.runtime.cell_domains import AgentCellDomains, CellDomains
 from ssc_control.runtime.cell_egress import AgentCellEgress, CellEgress
 from ssc_control.runtime.cell_logs import AgentCellLogs
 from ssc_control.runtime.cell_removal import AgentCellRemoval, CellRemoval
@@ -66,7 +68,8 @@ STATIC_LABEL: Final = "staticcell"
 CELL_UNAVAILABLE: Final = "CELL_UNAVAILABLE"
 """The failure code of a job for an org whose cell is not configured (``ErrorCode`` too)."""
 PRIVATE_JWK_MEMBERS: Final = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
-_CELL_LABEL = text("select cell_label from ssc.org where id = :org")
+_CELL_LABEL = text("select cell_label, apps_suffix from ssc.org where id = :org")
+_OrgSuffixes = tuple[str, str | None, tuple[str, ...]]
 _READY_CELL = text("select identity_jwks from ssc.cell where label = :label and status = 'ready'")
 
 
@@ -115,6 +118,7 @@ class OrgCell:
     """A connection's tables and columns from the cell's data gateway (GA-5.8)."""
     removal: CellRemoval | None = None
     """Deletes a removed app's files and secrets (GA-12)."""
+    domains: CellDomains | None = None
 
 
 class CellPorts(Protocol):
@@ -283,7 +287,7 @@ class CellRouter(CellPorts):
         self._build_store = build_store
         self._client = client
         self._clock = clock
-        self._labels: dict[str, tuple[str, float]] = {}
+        self._labels: dict[str, tuple[_OrgSuffixes, float]] = {}
         self._orgs: dict[tuple[str, str], OrgCell] = {}
 
     @property
@@ -291,26 +295,33 @@ class CellRouter(CellPorts):
         return self._catalog
 
     async def for_org(self, org_id: str) -> OrgCell:
-        label = await self._label(org_id)
+        label, suffix, previous = await self._label(org_id)
         config = await self._catalog.get(label)
         if config is None:
             raise CellUnavailableError(org_id, label)
         cell = self._orgs.get((org_id, label))
         if cell is None:
             cell = self._orgs[org_id, label] = self._make(org_id, config)
+        if cell.identity is not None and (
+            cell.identity.suffix != suffix or cell.identity.previous_suffixes != previous
+        ):
+            identity = replace(cell.identity, suffix=suffix, previous_suffixes=previous)
+            cell = self._orgs[org_id, label] = replace(cell, identity=identity)
         return cell
 
-    async def _label(self, org_id: str) -> str:
+    async def _label(self, org_id: str) -> _OrgSuffixes:
         now = self._clock()
         cached = self._labels.get(org_id)
         if cached is not None and now < cached[1]:
             return cached[0]
         async with bound_org(self._engine, org_id) as conn:
-            label = (await conn.execute(_CELL_LABEL, {"org": org_id})).scalar_one_or_none()
-        if label is None:
-            raise CellUnavailableError(org_id, None)
-        self._labels[org_id] = (str(label), now + LABEL_SECONDS)
-        return str(label)
+            row = (await conn.execute(_CELL_LABEL, {"org": org_id})).one_or_none()
+            if row is None or row[0] is None:
+                raise CellUnavailableError(org_id, None)
+            previous = await suffix_list(conn, org_id, row[1])
+        found = (str(row[0]), row[1], previous)
+        self._labels[org_id] = (found, now + LABEL_SECONDS)
+        return found
 
     async def aclose(self) -> None:
         """Close the clients made here. A ``client`` passed in stays its owner's to close."""
@@ -347,6 +358,7 @@ class CellRouter(CellPorts):
             identity=config.identity(self._domain),
             datagw=AgentCellSchemas(url, tokens, org_id=org_id, client=client),
             removal=AgentCellRemoval(url, tokens, org_id=org_id, client=client),
+            domains=AgentCellDomains(url, tokens, org_id=org_id, client=client),
         )
 
 

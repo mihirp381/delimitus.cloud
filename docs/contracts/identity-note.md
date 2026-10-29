@@ -1,6 +1,6 @@
 # Identity note v1 (`X-SSC-Identity`)
 
-The one fixed way an app learns who the user is. Frozen contract (SSC-020, decision 010). It changes by adding v2 beside it, never by editing v1. Implementations: `ssc_contracts.identity` (claims), `ssc_edge.identity_note` (mint), `ssc_app.identity` (Python verifier), `helpers/node/ssc-identity` (Node verifier), `conformance/identity_note/` (shared test vectors).
+The one fixed way an app learns who the user is. Frozen contract (SSC-020, decision 010). It changes by adding v2 beside it, never by editing v1, with one exception, the amendment of 2026-10-28 below. Implementations: `ssc_contracts.identity` (claims), `ssc_edge.identity_note` (mint), `ssc_app.identity` (Python verifier), `helpers/node/ssc-identity` (Node verifier), `conformance/identity_note/` (shared test vectors).
 
 ## Wire form
 
@@ -17,7 +17,7 @@ The gateway attaches one request header, `X-SSC-Identity`, holding a compact JWS
 | Claim | Type | Meaning |
 |---|---|---|
 | `iss` | string | The cell issuer, `https://keys.delimitus.com/<cell_label>`. |
-| `aud` | string | This app's exact origin, `https://<host>`; no path, no trailing slash. One string, never a list. |
+| `aud` | string | This app environment's id, `env_` and 20 characters (`^env_[a-z0-9]{20}$`), handed to the app as `SSC_APP_ENV_ID`. Prod and preview each have their own. One string, never a list. |
 | `sub` | string | `usr_…` for a person, `sch_…` for a schedule run. **Never an email.** |
 | `iat`, `exp` | int | Unix seconds. `exp = iat + 300`. A verifier refuses `exp - iat > 300` even if not yet expired. |
 | `org` | string | `org_…`. |
@@ -29,6 +29,8 @@ The gateway attaches one request header, `X-SSC-Identity`, holding a compact JWS
 | `email` | string | Display address. Persons only. |
 
 No other claim is allowed; a note with an unknown claim is refused. Schedule notes carry no `name` and no `email`. Optional claims are omitted, never sent as `null`.
+
+Amendment 2026-10-28 (founder decision, customer domains CD-0 Q1): `aud` is the environment id the gateway's snapshot already admits the request for, not the app's origin `https://<host>`. The app reads it from `SSC_APP_ENV_ID`; `SSC_APP_ORIGIN` stays, for links only, and no verifier reads it. A note's `aud` therefore survives a host change: when an org moves to its own domain (CD-4), every running app keeps verifying with no redeploy, and the gateway still binds host to environment on every request. v1 is amended in place, not replaced by a v2, because no customer app exists yet; this is the only exception there will ever be to the rule that v1 is never edited. A note carrying an origin as `aud` is refused `wrong_audience`. Apps need helpers 0.0.6 or later (`ssc-app`, `@delimitus/ssc-identity`). The helpers never read the environment: the app passes `audience`, and an app on 0.0.5 passes its origin (`SSC_APP_ORIGIN`), so it refuses every env-id note. A rebuild alone does not fix it. Each such app changes `audience` to `SSC_APP_ENV_ID` and is rebuilt on `ssc-app` / `@delimitus/ssc-identity` 0.0.6 before the gateway that signs env-id notes reaches its cell. Release order: publish 0.0.6, change and rebuild the apps, then roll the gateway (`docs/runbooks/ssc-064-control-plane.md`, step 8).
 
 Amendment 2026-10-19 (clarification, no wire change): both verifiers refuse `bad_claims` for `groups`, `name` or `email` sent as `null`; a group id matches `^grp_[a-z0-9]{20}$`; `name` is 1 to 256 Unicode code points and `email` at most 320, counted in code points (not UTF-16 units).
 
@@ -43,7 +45,7 @@ Amendment 2026-10-19 (clarification, no wire change): both verifiers refuse `bad
 - The public half reaches each app inline, as a `data:` URL in `SSC_IDENTITY_KEYS_URL` (`data:application/json;base64,<JWKS>`). An app has no internet and cannot reach the gateway (SSC-027), so it never fetches keys, and verification never depends on the gateway being up. Pass the variable as `keys`; both helpers read a `data:` URL without a network call. Nothing public is stored in a cell bucket: cells are under public access prevention (SSC-095).
 - The operator makes the keyring and its JWKS once per cell with `python -m ssc_edge.keys` and sets the JWKS as the cell's `gateway_jwks` (`infra/README.md`); the cell stack exports it as `identity_jwks`. The gateway refuses to start when its keyring does not match it.
 - Code outside a cell may use a URL instead (`https://keys.delimitus.com/<cell label>/jwks.json`); the helpers fetch and cache it and refetch when a `kid` is unknown.
-- The control plane's worker sets both variables on every app from its org's cell in `SSC_CELLS`, or in `ssc.cell` with `SSC_CELL_CATALOG=table`: the cell's `identity_jwks` and its label (SSC-018, decision 030 and its 2026-10-24 amendment).
+- The control plane's worker sets both variables, and `SSC_APP_ENV_ID`, on every app from its org's cell in `SSC_CELLS`, or in `ssc.cell` with `SSC_CELL_CATALOG=table`: the cell's `identity_jwks` and its label (SSC-018, decision 030 and its 2026-10-24 amendment).
 - Rotation: publish the new key beside the old one and put both in that cell's `jwks` in the platform stack's `cells` (the worker's `SSC_CELLS`); the reconciler rolls every running app to a revision whose `SSC_IDENTITY_KEYS_URL` holds both. Then start signing with the new `kid`, and remove the old key after a day. The JWKS therefore holds one or two keys. With `SSC_CELL_CATALOG=table` the public copy is published by rerunning step 10 of the build, `python -m ssc_infra.onboard <label> --stage <stage> ... --from-step 10` with the build's own arguments, once the cell stack holds both keys in `gateway_jwks` and is applied (step 10 overwrites the object). The served JWKS is the cell's `ssc.cell` row, which no command changes once it is `ready` (`cells ready` and `cells import-env` refuse): the control-plane side of a rotation needs a command that is not written yet (follow-up).
 
 ## Refusal codes
@@ -58,7 +60,7 @@ Both helpers raise one exception type, `IdentityRefused`, with a `code` from thi
 | `wrong_algorithm` | `alg` is not `ES256` |
 | `unknown_key` | no `kid`, or no such key in the JWKS |
 | `bad_signature` | the signature does not verify (tampered, or signed by a foreign key) |
-| `wrong_audience` | `aud` is not this app's origin |
+| `wrong_audience` | `aud` is not this app environment's id |
 | `wrong_issuer` | `iss` is not the pinned issuer (only when the app pins one) |
 | `expired` | `now >= exp + leeway` |
 | `not_yet_valid` | `iat > now + leeway` |
@@ -77,7 +79,7 @@ import os
 from ssc_app.identity import IdentityRefused, IdentityVerifier
 
 verifier = IdentityVerifier(
-    audience=os.environ["SSC_APP_ORIGIN"],
+    audience=os.environ["SSC_APP_ENV_ID"],
     keys=os.environ["SSC_IDENTITY_KEYS_URL"],
 )
 
@@ -96,7 +98,7 @@ Node (`@delimitus/ssc-identity` on npm, zero dependencies, Node 22+):
 import { IdentityRefused, IdentityVerifier } from '@delimitus/ssc-identity';
 
 const verifier = new IdentityVerifier({
-  audience: process.env.SSC_APP_ORIGIN,
+  audience: process.env.SSC_APP_ENV_ID,
   keys: process.env.SSC_IDENTITY_KEYS_URL,
 });
 
@@ -115,12 +117,12 @@ app.use(async (req, res, next) => {
 
 ## Test vectors
 
-`conformance/identity_note/vectors.json` holds the JWKS, a fixed `now`, two app origins and 40 cases: seven that verify (one with a 256-code-point name) and 33 that must be refused with a named code (wrong audience, another issuer with the issuer pinned (a case's `issuer` is the one the verifier pins), expired, not yet valid, foreign key, unknown `kid`, missing `kid`, tampered payload, `alg` none, HS256, wrong or missing `typ`, TTL over 300 s, 51 groups, email as subject, schedule note with email or name, unknown role, unknown claim, an upper-case group id, `groups`, `name` or `email` sent as `null`, a 257-code-point name, malformed tokens). Regenerate with `uv run python conformance/identity_note/generate.py`; the signing keys beside it are throwaway test keys. Both helpers run every case in CI, and a Python test checks that regenerating gives the same cases.
+`conformance/identity_note/vectors.json` holds the JWKS, a fixed `now`, three environment ids (app A's prod and preview, app B's prod) and 41 cases: seven that verify (one with a 256-code-point name) and 34 that must be refused with a named code (wrong audience: another app, the same app's other environment, and an old-style note carrying the app origin; another issuer with the issuer pinned (a case's `issuer` is the one the verifier pins), expired, not yet valid, foreign key, unknown `kid`, missing `kid`, tampered payload, `alg` none, HS256, wrong or missing `typ`, TTL over 300 s, 51 groups, email as subject, schedule note with email or name, unknown role, unknown claim, an upper-case group id, `groups`, `name` or `email` sent as `null`, a 257-code-point name, malformed tokens). Regenerate with `uv run python conformance/identity_note/generate.py`; the signing keys beside it are throwaway test keys. Both helpers run every case in CI, and a Python test checks that regenerating gives the same cases.
 
 ## Still owed by other tickets
 
 - SSC-064: the copy at `keys.delimitus.com/<cell_label>/jwks.json` for code outside a cell, never from a cell bucket, and the rotation runbook.
 - SSC-018 mints on every admitted request (`ssc_edge.gate`) and strips inbound `X-SSC-*` headers (`ssc_edge.envoy`); the cell's `gateway` KMS key, sealed keyring and `gateway_jwks` are wired in `infra/ssc_infra/cell.py`.
 - SSC-041 mints the `schedule` note at the gateway for a request whose schedule token verifies (decision 023, SSC-041 amendment); the worker's timer key (`timer_key_id`) and each cell's `timer_jwks` are set by the operator (`docs/runbooks/ssc-064-control-plane.md`, step 7).
-- SSC-050: the data gateway accepts this same note with the calling app's origin as `aud`, alongside the app's own workload token.
+- SSC-050: the data gateway accepts this same note with the calling environment's id as `aud`, alongside the app's own workload token.
 - Open design item (build plan §3.3): a bounded stream token for app-to-data-gateway calls from long streams.

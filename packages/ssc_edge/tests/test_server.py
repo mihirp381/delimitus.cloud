@@ -180,12 +180,12 @@ def test_the_id_token_is_for_the_environment_s_run_app_url_and_the_note_for_the_
     keys = public_jwks(world.keyring)
     note = verify(
         r.headers[IDENTITY_HEADER],
-        audience=f"https://{HOST}",
+        audience=PROD,
         keys=keys,
         issuer=f"https://keys.example.test/{LABEL}",
         now=NOW,
     )
-    assert note.aud == f"https://{HOST}"
+    assert note.aud == PROD
 
 
 def test_a_page_load_s_wake_cookie_goes_back_beside_the_upstream_headers(world: World) -> None:

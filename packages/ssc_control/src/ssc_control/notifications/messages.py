@@ -123,3 +123,40 @@ def welcome(console_url: str, org_id: str, *, mail_from: str | None = None) -> t
     if reads_replies(mail_from):
         lines.append("Reply to this mail for help.")
     return "Your organisation is ready", "\n".join(lines)
+
+
+def domain_link(console_url: str) -> str:
+    return f"{console_url.rstrip('/')}/domain"
+
+
+def domain_active(suffix: str, console_url: str) -> tuple[str, str]:
+    """The mail to an org's admins when its own address is ready."""
+    body = (
+        f"{suffix} is delegated and its certificate is issued. Your apps still live at their "
+        f"current addresses until an admin moves them.\n\nMove them: {domain_link(console_url)}"
+    )
+    return f"Your own address {suffix} is ready", body
+
+
+def domain_failed(suffix: str, reason: str, console_url: str) -> tuple[str, str]:
+    """The mail to an org's admins when its own address could not be set up."""
+    body = (
+        f"Setting up {suffix} failed: {reason}. Nothing changed for your apps.\n\n"
+        f"Try again: {domain_link(console_url)}"
+    )
+    return f"Your own address {suffix} could not be set up", body
+
+
+def domain_stalled(
+    org_id: str, suffix: str, detail: str | None, console_url: str
+) -> tuple[str, str]:
+    """The operator's notice when a certificate has been issuing for two hours."""
+    body = "\n".join(
+        [
+            f"Org: {org_id}",
+            f"Suffix: {suffix}",
+            f"Certificate authority says: {detail or 'nothing'}",
+            f"Console: {domain_link(console_url)}",
+        ]
+    )
+    return f"Certificate for {suffix} still issuing after two hours", body

@@ -51,17 +51,22 @@ test.describe('one app cannot act on another in the same cell', () => {
       );
     }, [url(B, ''), m] as const);
     expect(read).toBe('unreadable');
-    const form = await answerTo(page, url(B, `/note?m=${m}-form`), () =>
-      page.evaluate(([b, m]) => {
-        const f = document.createElement('form');
-        f.method = 'POST';
-        f.action = `${b}/note?m=${m}-form`;
-        document.body.append(f);
-        f.submit();
-      }, [url(B, ''), m] as const),
+    const form = await page.evaluate(
+      ([b, m]) =>
+        new Promise<string>((done) => {
+          document.addEventListener('securitypolicyviolation', (e) => done(e.effectiveDirective || e.violatedDirective), {
+            once: true,
+          });
+          setTimeout(() => done('sent'), 5_000);
+          const f = document.createElement('form');
+          f.method = 'POST';
+          f.action = `${b}/note?m=${m}-form`;
+          document.body.append(f);
+          f.submit();
+        }),
+      [url(B, ''), m] as const,
     );
-    expect(form.status(), 'a form POST from A to B').toBe(403);
-    await page.waitForURL(url(B, `/note?m=${m}-form`));
+    expect(form, "a form POST from A to B, blocked by A's form-action").toBe('form-action');
     expect(await reached(page, B, m)).toEqual([`post:${m}-own`]);
   });
 

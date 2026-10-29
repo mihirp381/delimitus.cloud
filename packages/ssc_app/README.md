@@ -14,7 +14,7 @@ import os
 from ssc_app.identity import IdentityRefused, IdentityVerifier
 
 verifier = IdentityVerifier(
-    audience=os.environ["SSC_APP_ORIGIN"],  # this app's exact origin, preview's included
+    audience=os.environ["SSC_APP_ENV_ID"],  # this app environment's id, preview's its own
     keys=os.environ["SSC_IDENTITY_KEYS_URL"],  # data: URL in a cell; else JWKS URL or dict
 )
 note = verifier.from_headers(request.headers)
@@ -23,7 +23,7 @@ note.name  # display only; None for a schedule run
 note.email  # display only; None for a schedule run
 ```
 
-`SSC_APP_ORIGIN` is the app's exact origin, such as `https://expenses.<cell label>.delimitusapps.com` (`https://expenses--preview.<cell label>.delimitusapps.com` in preview). In SSC, `SSC_IDENTITY_KEYS_URL` holds the signing keys as a `data:` URL, read without a network call; code outside SSC may pass `https://keys.delimitus.com/<cell label>/jwks.json` instead, fetched once and cached.
+`SSC_APP_ENV_ID` is the app environment's id, such as `env_4k2m9q7x1c8v3b6n0z5p`; prod and preview each have their own, and it never changes when the app's address does. `SSC_APP_ORIGIN`, the app's own address such as `https://expenses.<cell label>.delimitusapps.com`, is for links only. In SSC, `SSC_IDENTITY_KEYS_URL` holds the signing keys as a `data:` URL, read without a network call; code outside SSC may pass `https://keys.delimitus.com/<cell label>/jwks.json` instead, fetched once and cached.
 
 The note is an ES256 JWT (`typ: ssc-id+jwt`) that lasts five minutes. Key on `sub`, never on `email`: `email` and `name` are whatever the company directory says today, and a schedule run has neither. Verify once per request; never re-verify inside a long WebSocket or event stream. Every refusal is `IdentityRefused` with a `code`; treat them all as "not a signed-in user of this app".
 

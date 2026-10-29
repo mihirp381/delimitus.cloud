@@ -7,6 +7,7 @@ skip locally and fail in CI.
 
 import ast
 import asyncio
+import html
 import json
 import os
 import secrets
@@ -116,6 +117,11 @@ class Echo(BaseHTTPRequestHandler):
         self.send_header("set-cookie", "__Host-ssc-session=evil; Path=/; Secure")
         self.send_header("Set-Cookie", "__secure-SSC-x=1; Secure")
         self.send_header("set-cookie", "app=2; Path=/")
+        if self.path.startswith("/cookies"):
+            self.send_header("set-cookie", "wide=3; Path=/; Domain=testorg.com")
+            self.send_header("set-cookie", "Wide=4;domain =.testorg.com;Secure")
+            self.send_header("set-cookie", "loud=5; Secure;  DOMAIN=testorg.com")
+            self.send_header("set-cookie", "keep=domain=x; Path=/domain=y; SameSite=Lax")
         self.send_header("content-length", str(len(body)))
         self.end_headers()
         if self.path.startswith("/slow-body/"):
@@ -233,7 +239,7 @@ def test_only_a_marked_page_load_is_cut_at_two_seconds() -> None:
     assert authz["clear_route_cache"] is True
     on_success = authz["http_service"]["authorization_response"]
     assert on_success["allowed_client_headers_on_success"] == {
-        "patterns": [{"exact": "set-cookie"}]
+        "patterns": [{"exact": "set-cookie"}, {"exact": "content-security-policy"}]
     }
     assert {"exact": STREAM_HEADER} in on_success["allowed_upstream_headers"]["patterns"]
 
@@ -391,11 +397,21 @@ def test_an_allowed_request_reaches_the_app_with_only_the_minted_note(stack: Sta
     assert not (dropped | {"x-serverless-authorization"}) & seen.keys()  # no tokens in tests
     (token,) = seen["x-ssc-identity"]
     keys = jwks((w.keyring.signing_key.public_key(), w.keyring.identity_kid))
-    note = verify(
-        token, audience=f"https://{HOST}", keys=keys, issuer=f"https://keys.example.test/{LABEL}"
-    )
+    note = verify(token, audience=PROD, keys=keys, issuer=f"https://keys.example.test/{LABEL}")
     assert note.app.startswith("app_")
     assert r.headers.get_list("set-cookie") == ["app=2; Path=/"]
+
+
+def test_an_app_cookie_that_names_a_domain_never_reaches_the_browser(stack: Stack) -> None:
+    r = stack.get(HOST, "/cookies", headers={"cookie": stack.world.cookie()})
+    assert r.status_code == 200, r.text
+    assert r.headers.get_list("set-cookie") == [
+        "app=2; Path=/",
+        "keep=domain=x; Path=/domain=y; SameSite=Lax",
+    ]
+    assert r.headers.get_list("content-security-policy") == [
+        "form-action 'self' https://auth.example.test; frame-ancestors 'self'"
+    ]
 
 
 def test_a_timer_call_reaches_the_app_with_a_schedule_note_and_without_its_token(
@@ -419,7 +435,7 @@ def test_a_timer_call_reaches_the_app_with_a_schedule_note_and_without_its_token
     keys = jwks((w.keyring.signing_key.public_key(), w.keyring.identity_kid))
     note = verify(
         note_token,
-        audience=f"https://{HOST}",
+        audience=PROD,
         keys=keys,
         issuer=f"https://keys.example.test/{LABEL}",
     )
@@ -455,6 +471,18 @@ def test_no_session_is_sent_to_login(stack: Stack) -> None:
     assert r.status_code == 302
     assert r.headers["location"].startswith("https://auth.example.test/login?org=")
     assert r.headers["set-cookie"].startswith("__Host-ssc-login=")
+
+
+def test_a_form_posted_without_a_session_returns_to_the_page_it_came_from(stack: Stack) -> None:
+    posted = {
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+        "referer": f"https://{HOST}/form?x=1",
+    }
+    r = stack.get(HOST, "/save", method="POST", headers=posted)
+    assert r.status_code == 401
+    assert "return_to=https%3A%2F%2F" + HOST + "%2Fform%3Fx%3D1" in html.unescape(r.text)
 
 
 def test_request_shape_is_refused_before_the_app(stack: Stack) -> None:

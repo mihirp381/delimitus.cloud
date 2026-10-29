@@ -235,6 +235,8 @@ gcloud run jobs execute ssc-control-migrate --project=$P --region=us-central1 --
 
 Pass: the execution succeeds (exit code 0). The job prints no revision; a failed migration exits non-zero and the execution fails. The job runs as `ssc-control-migrate`, the only account that can read `SSC_MIGRATE_DSN`.
 
+A release that changes what the gateway signs goes in this order. The 2026-10-28 identity note amendment (`aud` is the environment id) is one: publish the 0.0.6 packages (`release-cli.yml`); in every app still on helpers 0.0.5, change `audience` to `SSC_APP_ENV_ID` and rebuild on `ssc-app` / `@delimitus/ssc-identity` 0.0.6; then roll the gateway. The helpers never read the environment, so a rebuild without the `audience` change still passes the origin, and such an app refuses every note the new gateway signs (`wrong_audience`).
+
 ## 9. Full apply: the release runs **[real]**
 
 ```sh

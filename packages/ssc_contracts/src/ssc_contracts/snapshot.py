@@ -13,6 +13,7 @@ import re
 from typing import Annotated, Any, Final, Literal, Self
 
 from pydantic import (
+    AfterValidator,
     AwareDatetime,
     BaseModel,
     ConfigDict,
@@ -28,6 +29,11 @@ from ssc_contracts.identity import EnvironmentName
 
 FORMAT_V1: Final = "ssc-snapshot/v1"
 MAX_VERSION: Final = 2**53 - 1
+MAX_SUFFIX: Final = 203
+"""The longest apps suffix whose hosts all fit in 253 characters: the longest first label (49)
+and a dot take the other 50."""
+MAX_PREVIOUS_SUFFIXES: Final = 8
+MAX_FORM_TARGETS: Final = 20
 
 OrgId = Annotated[str, StringConstraints(pattern=r"^org_[a-z0-9]{20}$")]
 AppId = Annotated[str, StringConstraints(pattern=r"^app_[a-z0-9]{20}$")]
@@ -47,10 +53,43 @@ AppStatus = Literal["active", "disabled", "quarantined"]
 UserStatus = Literal["active", "deactivated"]
 ConnectionStatus = Literal["active", "suspended"]
 
+_DNS_LABEL: Final = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 _SUBJECT_ID: Final = {
     "user": re.compile(r"usr_[a-z0-9]{20}"),
     "group": re.compile(r"grp_[a-z0-9]{20}"),
 }
+
+
+def check_suffix(suffix: str) -> str:
+    """A lower-case DNS name of at least three labels and at most :data:`MAX_SUFFIX`."""
+    labels = suffix.split(".")
+    if (
+        len(suffix) > MAX_SUFFIX
+        or len(labels) < 3  # noqa: PLR2004  (a label under a registrable name)
+        or not all(_DNS_LABEL.fullmatch(label) for label in labels)
+    ):
+        raise ValueError(f"not a usable apps suffix: {suffix!r}")
+    return suffix
+
+
+Suffix = Annotated[str, AfterValidator(check_suffix)]
+
+
+def check_form_origin(origin: str) -> str:
+    """``https://`` and a lower-case DNS name of at least two labels; no port, path or user."""
+    host = origin.removeprefix("https://")
+    labels = host.split(".")
+    if (
+        host == origin
+        or len(host) > 253  # noqa: PLR2004  (a DNS name)
+        or len(labels) < 2  # noqa: PLR2004  (a name under a top-level domain)
+        or not all(_DNS_LABEL.fullmatch(label) for label in labels)
+    ):
+        raise ValueError(f"not an https origin: {origin!r}")
+    return origin
+
+
+FormOrigin = Annotated[str, AfterValidator(check_form_origin)]
 
 
 class _Frozen(BaseModel):
@@ -174,6 +213,13 @@ class SnapshotEgress(_Frozen):
         return value
 
 
+class SnapshotRetiredSuffix(_Frozen):
+    """A suffix the org used before, recognised until ``until``."""
+
+    suffix: Suffix
+    until: AwareDatetime
+
+
 class SnapshotDoc(_Frozen):
     """One org's snapshot. ``version`` 0 is a live evaluation that was never published."""
 
@@ -199,6 +245,35 @@ class SnapshotDoc(_Frozen):
         exclude_if=lambda v: v is None,
         description="The egress proxy's allowlist and credentials (SSC-053).",
     )
+    suffix: Suffix | None = Field(
+        default=None,
+        exclude_if=lambda v: v is None,
+        description="The org's apps suffix (CD-1); absent means <cell label>.<apps domain>.",
+    )
+    previous_suffixes: tuple[SnapshotRetiredSuffix, ...] | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_PREVIOUS_SUFFIXES,
+        exclude_if=lambda v: v is None,
+        description="Suffixes the org used before, by until then suffix (CD-1).",
+    )
+    form_targets: dict[EnvId, tuple[FormOrigin, ...]] | None = Field(
+        default=None,
+        exclude_if=lambda v: v is None,
+        description="Origins each environment's forms may post to beside its own (CD-5.2).",
+    )
+
+    @field_validator("form_targets")
+    @classmethod
+    def _few_form_targets(
+        cls, value: dict[str, tuple[str, ...]] | None
+    ) -> dict[str, tuple[str, ...]] | None:
+        for env_id, origins in (value or {}).items():
+            if not 0 < len(origins) <= MAX_FORM_TARGETS:
+                raise ValueError(f"{env_id} lists 1 to {MAX_FORM_TARGETS} form targets")
+            if list(origins) != sorted(set(origins)):
+                raise ValueError(f"{env_id} form targets must be unique and sorted by byte order")
+        return value
 
     @model_validator(mode="after")
     def _references_resolve(self) -> Self:
@@ -225,4 +300,13 @@ class SnapshotDoc(_Frozen):
             raise ValueError(
                 "an egress credential names an environment that is not in environments"
             )
+        if not (self.form_targets or {}).keys() <= self.environments.keys():
+            raise ValueError("form_targets name an environment that is not in environments")
+        previous = self.previous_suffixes or ()
+        keys = [(p.until, p.suffix) for p in previous]
+        if keys != sorted(keys):
+            raise ValueError("previous_suffixes must be sorted by until, then suffix")
+        names = {p.suffix for p in previous}
+        if len(names) != len(previous) or self.suffix in names:
+            raise ValueError("a suffix is listed twice")
         return self

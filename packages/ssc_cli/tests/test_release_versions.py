@@ -190,3 +190,4 @@ def test_a_readme_pypi_or_npm_shows_names_no_repository_path(path: Path):
 def test_the_identity_readmes_give_an_example_origin(folder: str):
     text = (ROOT / folder / "README.md").read_text(encoding="utf-8")
     assert "`https://expenses.<cell label>.delimitusapps.com`" in text
+    assert "`SSC_APP_ENV_ID` is the app environment's id" in text

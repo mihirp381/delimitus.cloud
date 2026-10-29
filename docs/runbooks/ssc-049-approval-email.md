@@ -20,6 +20,7 @@ Approvers get an email when a request arrives, a digest at 07:00 UTC, one remind
 | `SSC_SMTP_PASSWORD` | from the secret store, never a file or a command line |
 | `SSC_MAIL_FROM` | the from address |
 | `SSC_CONSOLE_URL` | `https://...` |
+| `SSC_OPERATOR_MAIL` | optional; also mailed once when a customer domain's certificate is still issuing after two hours |
 
 Outside dev and tests, an unset `SSC_MAIL_TRANSPORT` sends nothing: mail waits in the outbox and the worker logs a warning. The log mailer (`log`) is refused there. The worker refuses to start with `smtp` and a missing value.
 

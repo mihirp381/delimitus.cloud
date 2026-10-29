@@ -37,7 +37,6 @@ PROJECT = f"ssc-c-{LABEL}"
 AUDIENCE = "https://ssc-datagw-123456789012.us-central1.run.app"
 ISSUER = f"https://keys.delimitus.com/{LABEL}"
 CERTS = "https://certs.test/oauth2/v3/certs"
-ORIGIN = f"https://ledger.{LABEL}.{DOMAIN}"
 GOOGLE_KID, NOTE_KID = "google-1", "cell-1"
 GOOGLE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 FORGED_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -57,13 +56,11 @@ NOTE_JWKS = {"keys": [_jwk(NOTE_KEY.public_key(), NOTE_KID, IDENTITY_ALG)]}
 
 SETTINGS = Settings(
     org_id=ORG,
-    cell_label=LABEL,
     project_id=PROJECT,
     bucket=f"{PROJECT}-cell",
     audience=AUDIENCE,
     jwks=NOTE_JWKS,
     issuer=ISSUER,
-    apps_domain=DOMAIN,
 )
 
 ENV = {
@@ -73,7 +70,6 @@ ENV = {
     "SSC_CELL_BUCKET": f"{PROJECT}-cell",
     "SSC_DATAGW_AUDIENCE": AUDIENCE,
     "SSC_IDENTITY_JWKS": json.dumps(NOTE_JWKS),
-    "SSC_APPS_DOMAIN": DOMAIN,
 }
 
 
@@ -111,7 +107,7 @@ def bearer(env_id: str = PROD, **changes: Any) -> dict[str, str]:
 
 
 def note(
-    *, env: str = "prod", app: str = LEDGER, sub: str = ADA, aud: str = ORIGIN, **changes: Any
+    *, env: str = "prod", app: str = LEDGER, sub: str = ADA, aud: str = PROD, **changes: Any
 ) -> str:
     """The identity note the gateway attached to the request the app is answering."""
     now = int(time.time())
@@ -156,6 +152,7 @@ def snapshot(
     connections: bool = True,
     ada_not_before: int | None = None,
     sales_kind: str | None = None,
+    suffix: str | None = None,
 ) -> dict[str, Any]:
     env = {"floor": "user"}
     ada: dict[str, Any] = {"status": "active"}
@@ -177,6 +174,8 @@ def snapshot(
         "users": {ADA: ada, BEN: {"status": "deactivated"}},
         "ceiling": None,
     }
+    if suffix is not None:
+        doc["suffix"] = suffix
     if connections:
         grant: dict[str, Any] = {} if grant_limits is None else {"limits": grant_limits}
         sales_doc: dict[str, Any] = {

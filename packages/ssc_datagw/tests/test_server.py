@@ -62,7 +62,7 @@ from ssc_datagw.server import (
 from ssc_datagw.workload import GoogleWorkloads
 from ssc_shared.access import ViewHolder
 from ssc_shared.blobstore_fs import FsBlobStore
-from ssc_shared.hosts import app_origin
+from ssc_shared.hosts import app_origin, default_suffix
 from ssc_shared.snapshot_feed import SnapshotFeed, latest_key
 
 SQL = "select id, amount from sales where id > $1"
@@ -445,11 +445,10 @@ async def test_an_environment_not_in_the_snapshot_is_refused(tmp_path: Path) -> 
     )
 
 
-PREVIEW_ORIGIN = app_origin("ledger", "preview", LABEL, DOMAIN)
 NOTES = {
     "a user of the app": (lambda: note(), PROD, ("usr_" + "a" * 20, "verified")),
     "a user of its preview": (
-        lambda: note(env="preview", aud=PREVIEW_ORIGIN),
+        lambda: note(env="preview", aud=PREVIEW),
         PREVIEW,
         ("usr_" + "a" * 20, "verified"),
     ),
@@ -476,8 +475,22 @@ async def test_the_user_the_app_acts_for_is_logged(
     assert (without["user"], without["user_context"]) == (None, "app_only")
 
 
+async def test_a_note_verifies_across_a_suffix_change(tmp_path: Path) -> None:
+    clock = Clock()
+    async with running(tmp_path, monotonic=clock) as w:
+        before = await w.ask(env_id=PROD, headers={IDENTITY_HEADER: note()})
+        await publish(w.blobs, 2, suffix="tools.testorg.com")
+        clock.advance(RECHECK_SECONDS + 0.1)
+        after = await w.ask(env_id=PROD, headers={IDENTITY_HEADER: note()})
+    assert (before.status_code, after.status_code) == (200, 200)
+
+
 BAD_NOTES = {
-    "another app's audience": lambda: note(aud=app_origin("payroll", "prod", LABEL, DOMAIN)),
+    "another app's audience": lambda: note(aud=PAY),
+    "its preview's audience": lambda: note(aud=PREVIEW),
+    "the app's origin as audience": lambda: note(
+        aud=app_origin("ledger", "prod", default_suffix(LABEL, DOMAIN))
+    ),
     "another environment of the app": lambda: note(env="preview"),
     "another app": lambda: note(app=PAYROLL),
     "another org": lambda: note(org="org_" + "z" * 20),

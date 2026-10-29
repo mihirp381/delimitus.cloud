@@ -71,6 +71,15 @@ Revision 0044 adds columns only (decision 002 amendment of 2026-10-27): ``org.si
 ``org.social_providers``, the provider names a pilot org signs in with, never a credential.
 Revision 0045 adds a column only (decision 002 amendment of 2026-10-28): ``org.invite_domains``,
 the email domains a social org may invite.
+Revision 0046 adds ``org.apps_suffix`` and ``org_suffix_retired`` (CD-1), keyed by org and
+suffix, so it is in ``UNKEYED_TABLES``: host names the org's apps answered at, nothing else.
+Revision 0047 adds ``org_domain`` (CD-3), an ordinary org-scoped table: an org's delegated zone,
+its name servers and its certificate's state; retired, never deleted.
+Revision 0048 adds ``org_domain.provider`` and ``stalled_at`` (CD-4): the DNS provider name read
+at request time and when a stalled certificate was first logged.
+Revision 0049 adds ``form_target`` (CD-5.2), keyed by org, environment and origin, so it is in
+``UNKEYED_TABLES``: origins an environment's forms may post to, nothing else.
+Revision 0050 adds the ``domain_active`` and ``domain_failed`` outbox kinds (CD-6.3).
 """
 
 from collections.abc import Mapping
@@ -125,6 +134,9 @@ TABLES: Final[frozenset[str]] = frozenset(
         "connection_grant",  # SSC-052, revision 0031
         "notification_outbox",  # SSC-049, revision 0032
         "oauth_code",  # SSC gap 7, revision 0033
+        "org_suffix_retired",  # CD-1, revision 0046
+        "org_domain",  # CD-3, revision 0047
+        "form_target",  # CD-5.2, revision 0049
     }
 )
 
@@ -162,6 +174,8 @@ UNKEYED_TABLES: Final[frozenset[str]] = frozenset(
         "egress_host",
         "egress_credential",
         "warm_gateway",
+        "org_suffix_retired",
+        "form_target",
     }
 )
 
@@ -229,6 +243,9 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "notification_outbox": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # sent ones pruned
     "oauth_code": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # expired ones pruned
     "oauth_client": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # unused ones pruned
+    "org_suffix_retired": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # until shortened
+    "org_domain": frozenset({"SELECT", "INSERT", "UPDATE"}),  # retired, never deleted
+    "form_target": frozenset({"SELECT", "INSERT", "DELETE"}),  # replaced as a list
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE
     "cell": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; retired, never deleted
     "onboarding": frozenset({"SELECT", "INSERT", "UPDATE"}),  # platform; abandoned, never deleted
