@@ -5,6 +5,7 @@
  * from `./ssc-reconnect/` in a deployed copy (README).
  *
  *   GET  /                 a page naming the app and the person the identity note names
+ *   GET  /form             the same page, for a form to be posted from
  *   GET  /whoami           the same as JSON, with the `Cookie` and deadline headers the app got
  *   POST /note?m=          recorded in the log, as is any GET with `m`; GET /log lists them
  *   GET  /set-cookies      answers with cookies named like the platform's, and one of its own
@@ -251,7 +252,7 @@ const server = createServer((req, res) => {
   if (path === '/events') return events(req, res);
   if (path === '/raw-events') return rawEvents(req, res);
   if (path === '/reconnect') return html(res, reconnectPage());
-  if (path === '/') return html(res, page(req));
+  if (path === '/' || path === '/form') return html(res, page(req));
   res.writeHead(404, { 'content-type': 'text/plain' });
   res.end('not here');
 });

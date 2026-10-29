@@ -55,6 +55,7 @@ ALLOWED_HEADERS: Final = (
     "accept",
     "cookie",
     "origin",
+    "referer",
     "upgrade",
     "sec-fetch-site",
     "sec-fetch-mode",

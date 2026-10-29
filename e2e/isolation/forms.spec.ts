@@ -29,14 +29,15 @@ test.describe('form targets and ended sessions', () => {
   test('a form posted after the session ended gets a sign-in page that returns to the form', async ({ page, context }) => {
     const m = mark();
     await useSession(context, A, target.user);
-    await page.goto(url(A, '/'));
+    const form = url(A, '/form?x=1');
+    await page.goto(form);
     await context.clearCookies({ name: SESSION, domain: A });
     const sent = url(A, `/note?m=${m}-ended`);
     const answer = await answerTo(page, sent, () => page.evaluate(post, sent));
     expect(answer.status()).toBe(401);
     expect(answer.headers()['cache-control']).toBe('no-store');
     await expect(page.locator('h1')).toHaveText('Your session ended');
-    await sentToLogin(page, url(A, '/'), () => page.getByRole('link', { name: 'Sign in again' }).click());
+    await sentToLogin(page, form, () => page.getByRole('link', { name: 'Sign in again' }).click());
     await useSession(context, A, target.user);
     expect(await reached(page, A, m)).toEqual([]);
   });

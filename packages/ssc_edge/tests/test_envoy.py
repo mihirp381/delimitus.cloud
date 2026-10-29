@@ -7,6 +7,7 @@ skip locally and fail in CI.
 
 import ast
 import asyncio
+import html
 import json
 import os
 import secrets
@@ -470,6 +471,18 @@ def test_no_session_is_sent_to_login(stack: Stack) -> None:
     assert r.status_code == 302
     assert r.headers["location"].startswith("https://auth.example.test/login?org=")
     assert r.headers["set-cookie"].startswith("__Host-ssc-login=")
+
+
+def test_a_form_posted_without_a_session_returns_to_the_page_it_came_from(stack: Stack) -> None:
+    posted = {
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-dest": "document",
+        "referer": f"https://{HOST}/form?x=1",
+    }
+    r = stack.get(HOST, "/save", method="POST", headers=posted)
+    assert r.status_code == 401
+    assert "return_to=https%3A%2F%2F" + HOST + "%2Fform%3Fx%3D1" in html.unescape(r.text)
 
 
 def test_request_shape_is_refused_before_the_app(stack: Stack) -> None:
