@@ -193,6 +193,8 @@ In the staging cell, before the first run:
 | --- | --- | --- | --- |
 | A POST from app A to app B is refused before it reaches B (`cross-app`) | Fetch-Metadata: a same-site `fetch` from A gets 403 and never reaches B; a form `POST` from A is blocked in the browser by A's `form-action` (CD-5.2); B's own `POST` works | pass | login sessions |
 | A script, an image or a frame on A cannot load from B (`cross-app`) | Fetch-Metadata: same-site subresources and frames are refused before B | pass | login sessions |
+| A form POST from B's preview to A, which its `form-action` names, is sent and A refuses it (`forms`) | the form target lets the browser send it; Fetch-Metadata still refuses a same-site `POST` before A | pass | none: rig only |
+| A form posted after the session ended gets a sign-in page (`forms`) | `401`, `no-store`, "Your session ended"; its link goes to sign in returning to the form's page, not the post's target; nothing reaches the app | pass | none: rig only |
 | From another site a form POST to B is refused and a link opens it (`cross-app`) | a cross-site `POST` is 403; a cross-site top-level `GET` navigation is allowed | pass | public entry and TLS |
 | A link from A opens B (`cross-app`) | a same-site top-level `GET` navigation is allowed, signed in | pass | login sessions |
 | A WebSocket from A to B is refused; from B it opens (`cross-app`) | the upgrade's `Origin` must be the app's own; the session cookie never reaches the app over a socket | pass | login sessions |

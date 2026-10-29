@@ -422,6 +422,15 @@ async def test_a_host_label_pointing_at_the_wrong_environment_is_not_found(world
         ),
         ("GET", {"sec_fetch_site": "same-site", "sec_fetch_mode": "cors"}, False),  # another app
         (
+            "POST",
+            {
+                "sec_fetch_site": "same-site",
+                "sec_fetch_mode": "navigate",
+                "sec_fetch_dest": "document",
+            },
+            False,
+        ),  # a form on another app that names this one in its form-action
+        (
             "GET",
             {
                 "sec_fetch_site": "cross-site",
