@@ -292,7 +292,10 @@ class CloudRunDriver(RuntimeDriver):
             name = _revision_name(spec, int(svc.get("generation") or 0) + 1)
             body["template"] = self._template(spec, name)
             body["traffic"] = _pinned_traffic(svc, revisions)
-        if any(_bare(body.get(k)) != _bare(svc.get(k)) for k in _WRITABLE):
+        if _bare({k: body.get(k) for k in _WRITABLE}) != _bare({k: svc.get(k) for k in _WRITABLE}):
+            if _reconciling(svc):
+                await self.wait_settled(spec.service)
+                raise _ConflictError
             await self._patch(spec.service, body)
         return name
 
@@ -419,7 +422,7 @@ class CloudRunDriver(RuntimeDriver):
             svc = await self._get_service(service)
             if svc is None:
                 raise ServiceNotFoundError(service)
-            if _reconciling(svc):
+            if _reconciling(svc) or "template" not in svc:
                 # A service mid-change reads half-filled: let the last change finish.
                 await self.wait_settled(service)
                 continue
