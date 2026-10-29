@@ -92,9 +92,9 @@ test('the calculator follows its inputs', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#calc')).toBeHidden();
   await page.locator('#model > summary').click();
-  await expect(page.locator('[data-out="total"]')).toHaveText('$32,658');
+  await expect(page.locator('[data-out="total"]')).toHaveText('$43,538');
   await page.locator('[data-in="apps"]').fill('1');
-  await expect(page.locator('[data-out="total"]')).toHaveText('$9,561');
+  await expect(page.locator('[data-out="total"]')).toHaveText('$20,441');
   await expect(page.locator('[data-out="apps"]')).toHaveText('1');
 });
 
@@ -164,20 +164,88 @@ test('the list bursts out of the prompt and settles in place', async ({ page }) 
   await expect(page.locator('#burst .burst__url')).toHaveCSS('opacity', '1', { timeout: 4000 });
 });
 
-test('the long way races once it is in view', async ({ page }) => {
+const ROWS = [
+  ['Build it yourself', 'Your own platform, to production grade', '240–400 h'],
+  ['With Delimitus', 'Connect company login, once', 'about 10 h'],
+  ['IT ticket', 'A service request, done by hand', '98 min'],
+  ['With Delimitus', 'IT review in the console', 'about 15 min'],
+];
+async function barWidths(page: Page) {
+  return page.locator('#bars .bars__v').evaluateAll((bars) =>
+    bars.map((b) => ({ bar: b.getBoundingClientRect().width, track: (b.parentElement as Element).getBoundingClientRect().width })),
+  );
+}
+async function expectFullWidth(page: Page) {
+  const [diy, login, ticket, review] = await barWidths(page);
+  expect(Math.abs(diy.bar - diy.track)).toBeLessThan(1);
+  expect(Math.abs(login.bar - Math.max(6, login.track * 0.025))).toBeLessThan(1);
+  expect(Math.abs(ticket.bar - ticket.track * 0.98)).toBeLessThan(1);
+  expect(Math.abs(review.bar - review.track * 0.15)).toBeLessThan(1);
+}
+
+test('the chart shows four rows, each with its value and a source', async ({ page }) => {
   await page.goto('/');
-  const race = page.locator('#race');
-  const last = race.locator('.race__lane--diy li').last();
-  const wait = race.locator('.race__lane--dlm li').last();
-  await expect(race).toHaveClass(/is-armed/);
-  await expect(last).not.toHaveClass(/is-done/);
-  await race.scrollIntoViewIfNeeded();
-  await expect(race).toHaveClass(/is-in/);
-  await expect(last).toHaveClass(/is-done/, { timeout: 8000 });
-  await expect(race.locator('[data-race="hours"]')).toHaveText('92');
-  await expect(race.locator('[data-race="total"]')).toHaveText('$32,658');
-  await expect(wait).toHaveClass(/is-wait/);
-  await expect(wait).not.toHaveClass(/is-done/);
+  const rows = page.locator('#bars .bars__row');
+  await expect(rows).toHaveCount(4);
+  for (const [i, [label, sub, value]] of ROWS.entries()) {
+    const row = rows.nth(i);
+    await expect(row.locator('.bars__l')).toHaveText(`${label} ${sub}`);
+    await expect(row.locator('.bars__n')).toHaveText(value);
+    await expect(row.locator('.bars__src')).not.toBeEmpty();
+    await expect(row.locator('.bars__track')).toHaveAttribute('aria-hidden', 'true');
+  }
+  await expect(page.locator('#bars figure')).toHaveCount(2);
+  await expect(page.locator('#bars .bars__src sup')).toHaveText(['1', '2', '3', '4']);
+  await expect(page.locator('#bars .bars__notes li')).toHaveCount(4);
+  await expect(page.locator('#bars .bars__src').last()).toHaveText('Our estimate 4');
+  await expect(page.locator('#bars .bars__notes li').last()).toContainText('Our estimate: about 15 minutes');
+  await expect(page.locator('#bars figcaption').first()).toContainText('Before the first app');
+  await expect(page.locator('#bars figcaption').last()).toContainText('Each request after that');
+});
+
+test('the panels sit side by side from 900px and stack below', async ({ page }) => {
+  await page.goto('/');
+  const [a, b] = await page.locator('#bars figure').evaluateAll((f) => f.map((x) => x.getBoundingClientRect().top));
+  const wide = await page.evaluate(() => matchMedia('(min-width: 900px)').matches);
+  if (wide) expect(b).toBe(a);
+  else expect(b).toBeGreaterThan(a);
+});
+
+test('each Delimitus bar is shorter than its do-it-yourself bar', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('#bars').scrollIntoViewIfNeeded();
+  await expect(page.locator('#bars')).toHaveClass(/is-in/);
+  await page.waitForTimeout(1600);
+  const [diy, login, ticket, approve] = await barWidths(page);
+  expect(login.bar).toBeLessThan(diy.bar);
+  expect(login.bar).toBeGreaterThanOrEqual(6);
+  expect(approve.bar).toBeGreaterThan(0);
+  expect(approve.bar).toBeLessThan(ticket.bar);
+});
+
+test('the bars grow from zero once the chart is in view, and end at full width', async ({ page }) => {
+  await page.goto('/');
+  const chart = page.locator('#bars');
+  await expect(chart).toHaveClass(/is-armed/);
+  await expect(chart).not.toHaveClass(/is-in/);
+  for (const w of await barWidths(page)) expect(w.bar).toBe(0);
+  await chart.scrollIntoViewIfNeeded();
+  await expect(chart).toHaveClass(/is-in/);
+  await expect.poll(async () => (await barWidths(page))[0].bar).toBeGreaterThan(0);
+  await expect.poll(async () => {
+    const [diy] = await barWidths(page);
+    return Math.round(diy.track - diy.bar);
+  }, { timeout: 4000 }).toBe(0);
+  await page.waitForTimeout(1200);
+  await expectFullWidth(page);
+  expect(await page.locator('#bars .bars__v').evaluateAll((b) => b.every((x) => getComputedStyle(x).opacity === '1'))).toBe(true);
+});
+
+test('the bars grow when the page opens on the chart', async ({ page }) => {
+  await page.goto('/#cost');
+  await expect(page.locator('#bars')).toHaveClass(/is-in/);
+  await page.waitForTimeout(1600);
+  await expectFullWidth(page);
 });
 
 const opacity = (el: Element) => getComputedStyle(el).opacity;
@@ -242,15 +310,14 @@ test.describe('reduced motion', () => {
     await expect(nodes).toHaveCount(5);
     for (const node of await nodes.all()) expect(await node.getAttribute('class')).toContain('is-done');
   });
-  test('shows the long way finished at load', async ({ page }) => {
+  test('shows the bars at full width with no animation', async ({ page }) => {
     await page.goto('/');
-    const race = page.locator('#race');
-    await expect(race).not.toHaveClass(/is-armed/);
-    for (const stage of await race.locator('.race__lane--diy li, .race__lane--dlm li:not(:last-child)').all()) {
-      expect(await stage.getAttribute('class')).toContain('is-done');
-    }
-    expect(await race.locator('.race__lane--dlm li').last().getAttribute('class')).toContain('is-wait');
-    expect(await race.locator('[data-race="hours"]').textContent()).toBe('92');
+    await expect(page.locator('#bars')).not.toHaveClass(/is-armed/);
+    await expectFullWidth(page);
+    await page.locator('#bars').scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    for (const bar of await page.locator('#bars .bars__v').all()) expect(await bar.evaluate(running)).toBe(0);
+    await expectFullWidth(page);
   });
   test('shows the three hero steps lit at once', async ({ page }) => {
     await page.goto('/');
@@ -278,7 +345,7 @@ test.describe('without JavaScript', () => {
     await page.goto('/');
     await expect(page.locator('#calcIn')).toBeHidden();
     await page.locator('#model > summary').click();
-    await expect(page.locator('[data-out="total"]')).toHaveText('$32,658');
+    await expect(page.locator('[data-out="total"]')).toHaveText('$43,538');
     await expect(page.locator('[data-out="cloud"]')).toHaveText('$2,738');
     await expect(page.locator('#term .chat__url')).toBeVisible();
     await expect(page.locator('#burst .burst__chips li').first()).toBeVisible();
@@ -292,14 +359,10 @@ test.describe('without JavaScript', () => {
     await expect(page.locator('#term .chat__url')).toBeVisible();
   });
 
-  test('shows the long way finished', async ({ page }) => {
+  test('shows the bars at full width', async ({ page }) => {
     await page.goto('/');
-    const stages = page.locator('#race .race__lane--diy li, #race .race__lane--dlm li:not(:last-child)');
-    await expect(stages).toHaveCount(10);
-    for (const stage of await stages.all()) await expect(stage).toHaveClass(/is-done/);
-    await expect(page.locator('#race .race__lane--dlm li').last()).toHaveClass(/is-wait/);
-    await expect(page.locator('#race [data-race="hours"]')).toHaveText('92');
-    await expect(page.locator('#race [data-race="total"]')).toBeVisible();
+    await expect(page.locator('#bars .bars__row')).toHaveCount(4);
+    await expectFullWidth(page);
   });
 
   test('sends the form as a plain post the server takes', async ({ page }, info) => {

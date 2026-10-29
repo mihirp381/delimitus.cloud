@@ -66,9 +66,9 @@ redirected to the apex by the service.
   JavaScript off the markup holds the whole conversation and the lit pipeline.
   The team cards swap with a short fade and their list items step in; under reduced motion they
   swap at once, and with JavaScript off the warehouse asks are in the markup.
-  The cost section's race fills the do-it-yourself stages every 650 ms while the hours count to 92,
-  and the Delimitus lane stops on an amber "waiting for IT", once per page load. Under reduced
-  motion, or with no IntersectionObserver, and with JavaScript off, it shows the finished race.
+  The cost section's bar chart grows each bar from the left, 150 ms apart, once it is in view, once
+  per page load, with no fade. Under reduced motion, or with no IntersectionObserver, and with
+  JavaScript off, the bars show at full width.
 
 ## Sign in
 

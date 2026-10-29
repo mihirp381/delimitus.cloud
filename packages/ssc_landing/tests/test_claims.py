@@ -87,6 +87,30 @@ def test_no_forbidden_phrase_is_on_the_page() -> None:
     assert forbidden_found(HTML, forbidden_phrases()) == []
 
 
+def test_every_public_source_on_the_page_has_a_source_row() -> None:
+    sources = REGISTER.split("## Public sources", 1)[1].split("\n## ", 1)[0]
+    on_page = set(
+        re.findall(r"\bsrc-[a-z0-9-]+", " ".join(re.findall(r'data-claim="([^"]+)"', HTML)))
+    )
+    assert on_page
+    assert [i for i in sorted(on_page) if f"`{i}`:" not in sources] == []
+
+
+def test_the_commissioned_study_says_who_paid_for_it() -> None:
+    row = re.search(r"^\| `src-forrester-okta` \|.*$", REGISTER, flags=re.M)
+    assert row is not None
+    assert "commissioned by Okta" in row[0]
+    assert "commissioned by Okta" in REGISTER.split("## Public sources", 1)[1]
+    assert "commissioned by Okta" in HTML
+
+
+def test_the_approval_row_says_it_is_our_estimate() -> None:
+    row = re.search(r"^\| `approve-estimate` \|.*$", REGISTER, flags=re.M)
+    assert row is not None
+    assert "Our estimate, set by the founder on 2026-10-28" in row[0]
+    assert "No study measures this" in row[0]
+
+
 REG = "| `login` | x | y | z |\n| `share` | x | y | z |\n"
 
 
