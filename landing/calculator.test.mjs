@@ -17,3 +17,15 @@ for (const v of vectors) {
     assert.deepEqual(diy(v.in), v.out);
   });
 }
+
+const line = page.match(/\/\* line:start \*\/([\s\S]*?)\/\* line:end \*\//);
+assert.ok(line, "index.html has no line:start ... line:end block");
+const costLine = new Function(`${line[1]}\nreturn costLine;`)();
+
+test("the cost line at the calculator's defaults", () => {
+  const c = costLine(vectors[0].in.setup, vectors[0].in.rate);
+  assert.deepEqual(
+    [c.diyH, c.diyUsd, c.dlmH, c.dlmUsd, c.savedH],
+    [567, 38533, 60, 4080, 507],
+  );
+});
