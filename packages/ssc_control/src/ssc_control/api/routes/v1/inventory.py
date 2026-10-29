@@ -192,7 +192,9 @@ _SELECT_APP = text(
 _LOCK_APP_OWNER = text(
     "select owner_user_id from ssc.app where org_id = :org and id = :id for no key update"
 )
-_SELECT_USER_STATUS = text("select status from ssc.user_account where org_id = :org and id = :id")
+_LOCK_USER_STATUS = text(
+    "select status from ssc.user_account where org_id = :org and id = :id for share"
+)
 _SET_OWNER = text("update ssc.app set owner_user_id = :owner where org_id = :org and id = :id")
 _STATUS_ACTION = {
     "disabled": AuditAction.APP_DISABLED,
@@ -474,7 +476,7 @@ async def transfer_owner(app_id: Id, body: OwnerTransfer, request: Request, uow:
     if before is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"app_id": app_id})
     status = (
-        await uow.conn.execute(_SELECT_USER_STATUS, {"org": uow.org_id, "id": body.user_id})
+        await uow.conn.execute(_LOCK_USER_STATUS, {"org": uow.org_id, "id": body.user_id})
     ).scalar_one_or_none()
     if status is None:
         raise Refusal(ErrorCode.REFERENCE_NOT_FOUND, evidence={"user_id": body.user_id})

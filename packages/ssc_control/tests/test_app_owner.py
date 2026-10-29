@@ -30,7 +30,16 @@ from typing import Any
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
-from ssc_testkit import ISSUER, Dsns, SigningKey, assert_problem, auth, mint, new_key
+from ssc_testkit import (
+    ISSUER,
+    Dsns,
+    SigningKey,
+    assert_problem,
+    auth,
+    mint,
+    new_key,
+    wait_for_a_lock_wait,
+)
 from test_access import (
     World,
     apps_of,
@@ -49,6 +58,7 @@ from test_access import (
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.snapshot import SnapshotDoc
+from ssc_control import directory
 from ssc_control.api import Settings, create_app
 from ssc_control.audit import chain
 from ssc_control.db import bind_org_sync, bound_org, make_engine
@@ -463,3 +473,19 @@ def test_deactivating_the_owner_while_the_kill_switch_holds_the_app_does_not_dea
         left.result(timeout=10)
     assert app_of(client, w.admin_token, w.app)["owner_state"] == "ownerless"
     assert [m["app_id"] for m in ownerless_mail(dsns.app, w.org)] == [w.app]
+
+
+def test_a_transfer_waits_for_a_deactivation_of_the_new_owner(
+    client: TestClient, world: World, dsns: Dsns
+) -> None:
+    bo, _ = member(client, world, "Bo")
+    with ThreadPoolExecutor(1) as pool, psycopg.connect(dsns.app) as leaving:
+        bind_org_sync(leaving, world.org)
+        user = {"org": world.org, "id": bo}
+        leaving.execute(pg(directory._LOCK_STATUS), user)
+        leaving.execute(pg(directory._SET_STATUS), {**user, "status": "deactivated"})
+        moved = pool.submit(transfer, client, world, bo, world.admin_token)
+        wait_for_a_lock_wait(dsns.app, blocker=leaving.info.backend_pid)
+        leaving.commit()
+        assert_problem(moved.result(timeout=10), ErrorCode.OWNER_NOT_ACTIVE)
+    assert app_of(client, world.admin_token, world.app)["owner_user_id"] == world.admin
