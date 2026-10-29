@@ -23,6 +23,7 @@ import asyncio
 import time
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import UTC, datetime
 from typing import Any
 
@@ -38,6 +39,7 @@ from test_access import (
     internal_token,
     new_org,
     on,
+    pg,
     put_grants,
     sql,
     sync_user,
@@ -48,7 +50,9 @@ from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_contracts.snapshot import SnapshotDoc
 from ssc_control.api import Settings, create_app
-from ssc_control.db import bound_org, make_engine
+from ssc_control.audit import chain
+from ssc_control.db import bind_org_sync, bound_org, make_engine
+from ssc_control.lifecycle import kill_switch
 from ssc_control.notifications import delivery
 from ssc_control.notifications.mailer import LogMailer
 from ssc_control.notifications.service import owner_left
@@ -441,3 +445,21 @@ def test_the_mail_is_dropped_once_the_app_has_an_owner(
     assert transfer(client, w, una, w.admin_token).status_code == 200
     assert flush(dsns.app, w.org).sent == type(LogMailer().sent)()
     assert ownerless_mail(dsns.app, w.org) == []
+
+
+def test_deactivating_the_owner_while_the_kill_switch_holds_the_app_does_not_deadlock(
+    client: TestClient, world: World, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    bo, bo_subject = member(client, world, "Bo")
+    w = on(world, create_app_as(client, user_token(signing_key, world.org, bo), "atlas"))
+    with ThreadPoolExecutor(1) as pool, psycopg.connect(dsns.app) as switch:
+        bind_org_sync(switch, w.org)
+        switch.execute("set lock_timeout = '5s'")
+        switch.execute(pg(kill_switch._LOCK_APP), {"org": w.org, "app": w.app})
+        left = pool.submit(set_status, client, w, bo_subject, "Bo", "deactivated")
+        wait([left], timeout=3)
+        switch.execute(pg(chain._LOCK_HEAD), {"org": w.org})
+        switch.commit()
+        left.result(timeout=10)
+    assert app_of(client, w.admin_token, w.app)["owner_state"] == "ownerless"
+    assert [m["app_id"] for m in ownerless_mail(dsns.app, w.org)] == [w.app]

@@ -2658,8 +2658,8 @@ def test_an_ownerless_mail_names_its_app_and_needs_no_approval(dsns: Dsns) -> No
         row("welcome", None, aid),
     ):
         assert refused(dsns.app, org.org_id, insert, bad) == CHECK_VIOLATION
-    unknown = row("app_ownerless", None, new_id("app"))
-    assert refused(dsns.app, org.org_id, insert, unknown) == FOREIGN_KEY_VIOLATION
+    gone = row("app_ownerless", None, new_id("app"))
+    assert run(dsns.app, org.org_id, insert + " returning kind", gone) == [("app_ownerless",)]
 
 
 def test_0045_backfills_invite_domains_and_round_trips(dsns: Dsns) -> None:
