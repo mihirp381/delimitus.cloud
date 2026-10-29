@@ -430,7 +430,8 @@ class Gate:
         if cleared:
             extra.append(("set-cookie", clear_cookie()))
         if posted:
-            return _page(401, pages.session_ended(login), "session_ended", *extra)
+            ended: Reason = "session_ended" if reason == "no_session" else reason
+            return _page(401, pages.session_ended(login), ended, *extra)
         return _redirect(login, reason, *extra)
 
     async def _own(self, own: str, path: str, host: str, facts: Facts) -> Deny:

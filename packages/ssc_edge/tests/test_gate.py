@@ -564,6 +564,9 @@ async def test_a_session_from_before_a_revocation_is_sent_back_to_login(world: W
     assert cookies == [login_cookie(NONCE), clear_cookie()]
     later = session(iat=NOW - 300)
     assert isinstance(await check(world, facts(cookie=world.cookie(later))), Allow)
+    posted = await denied(world, facts(method="POST", cookie=world.cookie(s), **POSTED))
+    assert (posted.status, posted.reason) == (401, "revoked")
+    assert b"Your session ended" in posted.body
 
 
 async def test_logout_clears_the_session_only_from_the_app_itself(world: World) -> None:
