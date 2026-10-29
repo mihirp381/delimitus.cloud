@@ -597,11 +597,34 @@ def zone_records(project: str, zone: str) -> list[str]:
 
 
 def delegation(name: str, resolver: str) -> list[str]:
-    return ["dig", "+short", "+time=5", "+tries=2", "NS", name, f"@{resolver}"]
+    return [
+        "dig",
+        "+noall",
+        "+comments",
+        "+answer",
+        "+time=5",
+        "+tries=2",
+        "NS",
+        name,
+        f"@{resolver}",
+    ]
+
+
+_STATUS: Final = re.compile(r"->>HEADER<<-.*\bstatus: ([A-Z]+)")
 
 
 def _hosts(lines: Iterable[str]) -> set[str]:
     return {h.strip().rstrip(".").lower() for h in lines if h.strip()}
+
+
+def answered_ns(out: str) -> tuple[str, set[str] | None]:
+    """The answer's status, and its NS hosts when that is NOERROR or NXDOMAIN, else None."""
+    found = _STATUS.search(out)
+    status = found[1] if found else "no answer"
+    if status not in {"NOERROR", "NXDOMAIN"}:
+        return status, None
+    rows = (line.split() for line in out.splitlines() if not line.startswith(";"))
+    return status, _hosts(r[4] for r in rows if len(r) >= 5 and r[3].upper() == "NS")  # noqa: PLR2004
 
 
 def destroy_args(stack: str) -> tuple[tuple[str, ...], ...]:
@@ -917,11 +940,12 @@ class Onboarding:
             ours = _hosts(zone.get("nameServers", []))
             for resolver in RESOLVERS:
                 seen = self.t.shell(delegation(name, resolver))
-                if seen.code:
+                status, hosts = answered_ns(seen.out.decode(errors="replace"))
+                if seen.code or hosts is None:
                     raise OnboardError(
-                        f"{resolver} did not answer for {name}; nothing was destroyed"
+                        f"{resolver} did not answer for {name} ({status}); nothing was destroyed"
                     )
-                if _hosts(seen.out.decode().splitlines()) & ours:
+                if hosts & ours:
                     raise OnboardError(
                         f"{resolver} still sees {name} delegated to its zone: remove the NS "
                         "records at the parent first; nothing was destroyed"

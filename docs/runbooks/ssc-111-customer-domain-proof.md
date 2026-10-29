@@ -85,7 +85,7 @@ After seven counted nights, and not before, change `landing/CLAIMS.md`: the date
 Keep the domain delegated if it is cheap to keep: it is the walk's standing customer suffix. To end it, in this order:
 
 1. Flip back to the default suffix (`ssc domains flip --back --confirm`).
-2. Undelegate: remove the NS records for the suffix at the registrar, and wait out their TTL. `dig +short NS <suffix> @1.1.1.1` (and `@8.8.8.8`, `@9.9.9.9`) must no longer name the zone's servers.
+2. Undelegate: remove the NS records for the suffix at the registrar, and wait out their TTL. `dig NS <suffix> @1.1.1.1` (and `@8.8.8.8`, `@9.9.9.9`) must show `status: NOERROR` or `NXDOMAIN` and no longer name the zone's servers; an empty `dig +short` proves nothing, since a `SERVFAIL` prints nothing too.
 3. Ask the operator to retire the suffix (`POST /internal/v1/orgs/{org_id}/domain/retire`). The retire asks the three public resolvers again first: it is refused ("the parent still delegates") while any of them still names the zone's servers, and refused when one of them does not answer (decision 004 amendment, Retention). Once retired, the name stays reserved to the org (`docs/trust/domain-limits.md`).
 
 The retire empties the zone and keeps it. `python -m ssc_infra.onboard <label> --destroy` refuses the cell until both steps 2 and 3 are done.

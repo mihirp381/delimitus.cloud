@@ -215,7 +215,7 @@ class World:
             zone = argv[4].removeprefix("--zone=")
             return Done(0, "\n".join(self.records[zone]).encode(), "")
         if argv[0] == "dig":
-            return self.delegated.get(argv[-1].removeprefix("@"), Done(0, b"", ""))
+            return self.delegated.get(argv[-1].removeprefix("@"), dig_answer("NXDOMAIN"))
         if argv[-1] == "ssc_conformance.nightly":
             return Done(self.probe_code, b"floor probes: 12 passed\n", "")
         return Done(0, b"", "")
@@ -1167,6 +1167,12 @@ def test_destroy_of_a_cell_still_in_the_local_folder_runs_there(world: World) ->
 OUR_NS = ["ns-cloud-a1.googledomains.com.", "ns-cloud-a2.googledomains.com."]
 
 
+def dig_answer(status: str, *ns: str) -> Done:
+    head = f";; ->>HEADER<<- opcode: QUERY, status: {status}, id: 4125\n;; ANSWER SECTION:\n"
+    rows = "".join(f"apps.testorg.com.\t300\tIN\tNS\t{h}\n" for h in ns)
+    return Done(0, (head + rows).encode(), "")
+
+
 def have_zone(world: World, *kinds: str) -> None:
     world.bucket = {STACK: len(URNS)}
     zone = {"name": "ssc-d-0123456789ab", "dnsName": "apps.testorg.com.", "nameServers": OUR_NS}
@@ -1176,7 +1182,8 @@ def have_zone(world: World, *kinds: str) -> None:
 
 def test_destroy_goes_on_once_the_customer_zone_is_retired_and_undelegated(world: World) -> None:
     have_zone(world)
-    world.delegated["8.8.8.8"] = Done(0, b"ns1.registrar.example.\n", "")
+    world.delegated["8.8.8.8"] = dig_answer("NOERROR", "ns1.registrar.example.")
+    world.delegated["9.9.9.9"] = dig_answer("NOERROR")
     assert world.destroy() == 0
     assert DESTROY in world.bucket_calls()
     asked = [c[-1] for c in world.shell_calls if c[0] == "dig"]
@@ -1188,8 +1195,27 @@ def test_destroy_goes_on_once_the_customer_zone_is_retired_and_undelegated(world
     ("kinds", "delegated", "said"),
     [
         (("A", "CAA"), {}, "apps.testorg.com is not retired: undelegate it at the parent"),
-        ((), {"9.9.9.9": Done(0, OUR_NS[1].upper().encode(), "")}, "9.9.9.9 still sees"),
-        ((), {"1.1.1.1": Done(9, b"", "timed out")}, "1.1.1.1 did not answer"),
+        ((), {"9.9.9.9": dig_answer("NOERROR", OUR_NS[1].upper())}, "9.9.9.9 still sees"),
+        (
+            (),
+            {"1.1.1.1": dig_answer("SERVFAIL")},
+            "1.1.1.1 did not answer for apps.testorg.com (SERVFAIL)",
+        ),
+        (
+            (),
+            {"8.8.8.8": dig_answer("REFUSED")},
+            "8.8.8.8 did not answer for apps.testorg.com (REFUSED)",
+        ),
+        (
+            (),
+            {"1.1.1.1": Done(9, b";; connection timed out; no servers could be reached\n", "")},
+            "1.1.1.1 did not answer for apps.testorg.com (no answer)",
+        ),
+        (
+            (),
+            {"9.9.9.9": Done(0, b"", "")},
+            "9.9.9.9 did not answer for apps.testorg.com (no answer)",
+        ),
     ],
 )
 def test_destroy_refuses_while_the_customer_zone_is_live_or_delegated(
@@ -1292,5 +1318,5 @@ def test_the_destroy_dry_run_prints_the_plan_and_runs_nothing(world: World) -> N
     assert f"$ pulumi stack rm --stack {STACK} --yes --non-interactive" in text
     assert "$ gcloud storage rm 'gs://ssc-control-<control_public_stage>-keys/" in text
     assert f"$ gcloud dns managed-zones list --project={PROJECT} '--filter=name~^ssc-d-'" in text
-    assert "$ dig +short +time=5 +tries=2 NS '<dnsName>' @9.9.9.9" in text
+    assert "$ dig +noall +comments +answer +time=5 +tries=2 NS '<dnsName>' @9.9.9.9" in text
     assert world.out[-1] == RETIRE
