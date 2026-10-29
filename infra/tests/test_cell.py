@@ -1471,6 +1471,8 @@ def test_the_agent_makes_domain_zones_but_never_deletes_one(cell_a: list[Declare
         agent,
         f"projects/{naming.cell_project(A)}/roles/sscCellAgentDomains",
     )
+    assert grant.get("condition") is None
+    assert "no IAM condition" in role["description"]
     held = {p for d in cell_a if d.type.endswith("IAMCustomRole") for p in d.inputs["permissions"]}
     assert not [p for p in held if p.startswith("dns.managedZones.delete")]
 

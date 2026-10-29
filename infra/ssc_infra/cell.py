@@ -856,8 +856,8 @@ class Cell:
             role_id="sscCellAgentDomains",
             title="SSC cell agent: customer domains",
             description="Zones, records and certificates of customer domains, no zone delete on "
-            "purpose (decision 004, amendment 2026-10-28); the agent's code names only ssc-d- "
-            "resources.",
+            "purpose (decision 004, amendment 2026-10-28); no IAM condition can name ssc-d- "
+            "resources, so the agent's code names only those.",
             permissions=list(DOMAINS_PERMISSIONS),
             opts=self._o(),
         )
