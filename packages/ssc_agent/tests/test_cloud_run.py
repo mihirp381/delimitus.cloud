@@ -7,11 +7,13 @@ import pytest
 
 from ssc_agent.cloud_run import (
     IDENTITY_CREATE_TRIES,
+    INGRESS,
+    TRANSIENT_TRIES,
     CellRuntime,
     CloudRunDriver,
     _ApiError,  # pyright: ignore[reportPrivateUsage]
 )
-from ssc_shared.runtime import ServiceSpec
+from ssc_shared.runtime import RuntimeDriverError, ServiceSpec
 
 PROJECT = "ssc-c-test"
 CELL = CellRuntime(
@@ -151,3 +153,187 @@ async def test_the_startup_probe_checks_every_second_for_two_minutes() -> None:
     )
     assert probe["periodSeconds"] * probe["failureThreshold"] == 120
     assert probe["timeoutSeconds"] <= probe["periodSeconds"]
+
+
+SERVICE = "ssc-a-0123456789abcdefghij"
+REVISION = f"{SERVICE}-00002-abcdef"
+SERVICE_PATH = f"/v2/{CELL.service_path(SERVICE)}"
+SETTLED: dict[str, Any] = {
+    "etag": "e2",
+    "generation": 2,
+    "observedGeneration": 2,
+    "ingress": INGRESS,
+    "template": {"revision": REVISION},
+}
+RECONCILING = SETTLED | {"reconciling": True}
+BEHIND = SETTLED | {"observedGeneration": 1}
+HALF_FILLED = {"etag": "e2", "generation": 2, "observedGeneration": 2}
+NO_INGRESS = {k: v for k, v in SETTLED.items() if k != "ingress"}
+SPEC = ServiceSpec(
+    service=SERVICE,
+    image_digest="sha256:" + "a" * 64,
+    port=8080,
+    health_path="/healthz",
+    resource_class="small",
+    env={"PORT": "8080"},
+    billing="request",
+    timeout_seconds=300,
+    concurrency=80,
+    min_instances=0,
+    max_instances=1,
+    labels={"ssc-app": "one"},
+)
+
+
+class Run:
+    """A fake Cloud Run that answers each read of the service with the next scripted body or
+    status, then repeats the last, and logs what it was asked."""
+
+    def __init__(self, reads: Sequence[dict[str, Any] | int]) -> None:
+        self.reads = list(reads)
+        self.revisions: list[dict[str, Any]] = [{"name": f"{SERVICE_PATH}/{REVISION}"}]
+        self.log: list[str] = []
+        self.patches: list[dict[str, Any]] = []
+        self.sleeps: list[float] = []
+
+    def handler(self, request: httpx2.Request) -> httpx2.Response:
+        if request.url.path == f"{SERVICE_PATH}/revisions":
+            return httpx2.Response(200, json={"revisions": self.revisions})
+        if request.url.path == f"{SERVICE_PATH}:setIamPolicy":
+            self.log.append("invoker")
+            return httpx2.Response(200, json={})
+        assert request.url.path == SERVICE_PATH
+        if request.method == "PATCH":
+            self.log.append("patch")
+            self.patches.append(json.loads(request.content))
+            return httpx2.Response(200, json={})
+        assert request.method == "GET"
+        read = self.reads.pop(0) if len(self.reads) > 1 else self.reads[0]
+        if isinstance(read, int):
+            self.log.append(str(read))
+            error = {"status": "UNAVAILABLE", "message": "The service is currently unavailable"}
+            return httpx2.Response(read, json={"error": error})
+        if read.get("reconciling") or read["observedGeneration"] < read["generation"]:
+            self.log.append("reconciling")
+        else:
+            self.log.append("settled" if "template" in read else "half-filled")
+        return httpx2.Response(200, json=read)
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+
+    def driver(self) -> CloudRunDriver:
+        async def token() -> str:
+            return "dummy-token"
+
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(self.handler))
+        return CloudRunDriver(CELL, token, client=client, sleep=self.sleep)
+
+
+async def test_set_traffic_waits_for_a_reconciling_service_before_it_reads_and_patches() -> None:
+    run = Run([RECONCILING, RECONCILING, SETTLED])
+    await run.driver().set_traffic(SERVICE, REVISION)
+    assert run.log == ["reconciling", "reconciling", "settled", "settled", "patch", "settled"]
+    assert run.sleeps == [1.0]
+    (patch,) = run.patches
+    assert patch["traffic"] == [
+        {"type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION", "revision": REVISION, "percent": 100}
+    ]
+    assert patch["ingress"] == INGRESS
+    assert patch["invokerIamDisabled"] is False
+
+
+async def test_set_traffic_reads_again_after_a_half_filled_read() -> None:
+    run = Run([HALF_FILLED, NO_INGRESS])
+    await run.driver().set_traffic(SERVICE, REVISION)
+    assert run.log == ["half-filled", "settled", "settled", "patch", "settled"]
+    (patch,) = run.patches
+    assert patch["template"] == {"revision": REVISION}
+    assert patch["ingress"] == INGRESS
+    assert patch["invokerIamDisabled"] is False
+
+
+async def test_scale_to_zero_waits_for_a_service_behind_its_generation() -> None:
+    run = Run([BEHIND, SETTLED])
+    await run.driver().scale_to_zero(SERVICE)
+    assert run.log == ["reconciling", "settled", "settled", "patch", "settled"]
+    (patch,) = run.patches
+    assert patch["scaling"] == {"scalingMode": "MANUAL", "manualInstanceCount": 0}
+    assert patch["ingress"] == INGRESS
+
+
+async def test_a_503_is_retried_with_back_off() -> None:
+    run = Run([503, SETTLED])
+    assert await run.driver().settled(SERVICE)
+    assert run.log == ["503", "settled"]
+    assert run.sleeps == [1.0]
+
+
+async def test_a_503_on_every_try_raises_after_all_tries() -> None:
+    run = Run([503])
+    with pytest.raises(RuntimeDriverError, match="HTTP 503 UNAVAILABLE"):
+        await run.driver().settled(SERVICE)
+    assert run.log == ["503"] * TRANSIENT_TRIES
+    assert run.sleeps == [min(2.0**n, 10.0) for n in range(TRANSIENT_TRIES - 1)]
+
+
+async def test_a_dropped_connection_is_retried() -> None:
+    run = Run([SETTLED])
+    dropped = [True]
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if dropped and dropped.pop():
+            raise httpx2.ConnectError("reset", request=request)
+        return run.handler(request)
+
+    async def token() -> str:
+        return "dummy-token"
+
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    driver = CloudRunDriver(CELL, token, client=client, sleep=run.sleep)
+    assert await driver.settled(SERVICE)
+    assert run.sleeps == [1.0]
+
+
+async def test_wait_settled_still_gives_up_after_its_time() -> None:
+    run = Run([RECONCILING])
+    with pytest.raises(RuntimeDriverError, match="not settled after 3 s"):
+        await run.driver().wait_settled(SERVICE, within=3)
+    assert run.sleeps == [1.0, 1.0, 1.0]
+
+
+def running(run: Run) -> dict[str, Any]:
+    """A settled service running SPEC as REVISION, as Cloud Run reads it back."""
+    template = run.driver()._template(SPEC, REVISION)  # pyright: ignore[reportPrivateUsage]
+    run.revisions = [{"name": f"{SERVICE_PATH}/{REVISION}", **template}]
+    return SETTLED | {
+        "labels": dict(SPEC.labels),
+        "scaling": {"scalingMode": "AUTOMATIC", "maxInstanceCount": 1},
+        "template": template,
+        "traffic": [
+            {
+                "type": "TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION",
+                "revision": REVISION,
+                "percent": 100,
+            }
+        ],
+    }
+
+
+async def test_apply_of_an_unchanged_service_sends_no_patch() -> None:
+    run = Run([])
+    run.reads = [running(run)]
+    assert await run.driver().apply(SPEC) == REVISION
+    assert run.log == ["settled", "invoker"]
+    assert run.patches == []
+
+
+async def test_apply_waits_for_a_reconciling_service_before_it_patches() -> None:
+    run = Run([])
+    stale = running(run) | {"labels": {}}
+    run.reads = [stale | {"reconciling": True}, stale]
+    assert await run.driver().apply(SPEC) == REVISION
+    assert run.log == ["reconciling", "settled", "settled", "patch", "invoker"]
+    assert run.sleeps == [1.0]
+    (patch,) = run.patches
+    assert patch["labels"] == dict(SPEC.labels)
