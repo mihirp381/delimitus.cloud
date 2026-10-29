@@ -104,10 +104,11 @@ def test_the_commissioned_study_says_who_paid_for_it() -> None:
     assert "commissioned by Okta" in HTML
 
 
-def test_the_approval_row_names_its_method() -> None:
-    row = re.search(r"^\| `approve-measured` \|.*$", REGISTER, flags=re.M)
+def test_the_approval_row_says_it_is_our_estimate() -> None:
+    row = re.search(r"^\| `approve-estimate` \|.*$", REGISTER, flags=re.M)
     assert row is not None
-    assert "Founder timed N approvals in the console (where, date); median" in row[0]
+    assert "Our estimate, set by the founder on 2026-10-28" in row[0]
+    assert "No study measures this" in row[0]
 
 
 REG = "| `login` | x | y | z |\n| `share` | x | y | z |\n"

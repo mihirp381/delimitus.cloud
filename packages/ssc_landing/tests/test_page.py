@@ -399,12 +399,18 @@ def test_the_cost_chart_shows_four_sourced_rows() -> None:
         ),
         ("diy", "src-metricnet", "IT ticket", "A service request, done by hand", "98 min"),
     ]
-    assert rows[3][:4] == ("dlm", "approve-measured", "With Delimitus", "Approve in the console")
+    assert rows[3][:5] == (
+        "dlm",
+        "approve-estimate",
+        "With Delimitus",
+        "IT review in the console",
+        "about 15 min",
+    )
     assert [r[5] for r in rows] == [
         "Marmelab, Oct 2026 <sup>1</sup>",
         "Forrester for Okta, Jul 2026 <sup>2</sup>",
         "MetricNet, 2023 <sup>3</sup>",
-        "Measured by Delimitus <sup>4</sup>",
+        "Our estimate <sup>4</sup>",
     ]
     notes = re.findall(r'<li data-claim="([^"]+)">([^<]+)</li>', _bars())
     assert [n[0] for n in notes] == [r[1] for r in rows]
@@ -422,13 +428,20 @@ def test_the_bars_are_drawn_to_their_scales() -> None:
     assert 'bars__v--range::before { content: ""; display: block; width: 60cqw;' in HTML
     assert ".bars__v--login { width: max(6px, 2.5%); }" in HTML
     assert ".bars__v--ticket { width: 98%; }" in HTML
+    assert ".bars__v--review { width: 15%; }" in HTML
     for word in ("caution", "race"):
         assert word not in _bars()
 
 
-def test_the_approval_time_is_measured() -> None:
-    """Red until the founder's timing replaces the placeholder."""
+def test_the_approval_time_is_our_estimate() -> None:
     value = re.search(r'<p class="bars__n" id="approveTime">([^<]*)</p>', HTML)
     assert value is not None
-    assert re.search(r"\d", value[1])
+    assert value[1] == "about 15 min"
+    note = re.search(r'<li data-claim="approve-estimate">([^<]+)</li>', HTML)
+    assert note is not None
+    assert note[1].startswith("Our estimate: ")
+    register = (LANDING / "CLAIMS.md").read_text(encoding="utf-8")
     assert "MEASURE" not in HTML
+    assert "MEASURE" not in register
+    assert "18 to 24 min" in register
+    assert "18 to 24" not in HTML

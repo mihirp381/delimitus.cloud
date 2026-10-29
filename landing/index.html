@@ -834,6 +834,7 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .bars__v--range::before { content: ""; display: block; width: 60cqw; height: 100%; background: var(--fill); }
 .bars__v--login { width: max(6px, 2.5%); }
 .bars__v--ticket { width: 98%; }
+.bars__v--review { width: 15%; }
 .bars__n { margin: 0; text-align: right; white-space: nowrap; font: 700 1.05rem/1.2 var(--display); letter-spacing: -0.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
 .bars__src { grid-column: 1 / -1; margin: 0; font-size: 0.75rem; line-height: 1.45; color: var(--ink-2); }
 .bars__notes { margin: 0; padding: 14px 0 0 1.4em; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem; color: var(--ink-2); overflow-wrap: anywhere; }
@@ -1530,11 +1531,11 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
               <p class="bars__n">98 min</p>
               <p class="bars__src">MetricNet, 2023 <sup>3</sup></p>
             </div>
-            <div class="bars__row bars__row--dlm" data-claim="approve-measured">
-              <p class="bars__l">With Delimitus <span>Approve in the console</span></p>
-              <div class="bars__track" aria-hidden="true"><span class="bars__v"></span></div>
-              <p class="bars__n" id="approveTime">MEASURE</p>
-              <p class="bars__src">Measured by Delimitus <sup>4</sup></p>
+            <div class="bars__row bars__row--dlm" data-claim="approve-estimate">
+              <p class="bars__l">With Delimitus <span>IT review in the console</span></p>
+              <div class="bars__track" aria-hidden="true"><span class="bars__v bars__v--review"></span></div>
+              <p class="bars__n" id="approveTime">about 15 min</p>
+              <p class="bars__src">Our estimate <sup>4</sup></p>
             </div>
           </figure>
         </div>
@@ -1542,7 +1543,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
           <li data-claim="src-marmelab">About two weeks for a first version, then one or two person-months to production grade. François Zaninotto, “Building Your Own AI Platform for Vibe-Coded Apps”, Marmelab blog, 15 October 2026 (marmelab.com/blog/2026/10/15/building-your-own-ai-platform.html). Hours at 40 a week and 160 a person-month: 80 + 1–2 × 160 = 240–400 h.</li>
           <li data-claim="src-forrester-okta">Onboarding a new app to company login, provisioning included: 40 hours on average, 30 of them saved with Okta. Forrester Consulting, “The Total Economic Impact™ Of Adopting An Identity Security Fabric With Okta”, commissioned by Okta, July 2026 (tei.forrester.com/go/Okta/IdentitySecurityFabric/index.html?lang=en-us).</li>
           <li data-claim="src-metricnet">Average work time for a desktop-support service request of any kind, not only access: 98 minutes. MetricNet, “Benchmarking Roundup – Summary of 2023 Service and Support Benchmarks”, November 2023 (brighttalk.com/resource/core/447335/benchmarking-roundup---summary-of-2023-service-and-support-benchmarks-v3_954461.pdf).</li>
-          <li data-claim="approve-measured">The median of MEASURE approvals timed in the console by Delimitus, MEASURE.</li>
+          <li data-claim="approve-estimate">Our estimate: about 15 minutes for IT to review and approve one request in the console. Delimitus does the provisioning.</li>
         </ol>
       </div>
       <div class="trio">

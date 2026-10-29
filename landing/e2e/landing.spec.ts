@@ -168,7 +168,7 @@ const ROWS = [
   ['Build it yourself', 'Your own platform, to production grade', '240–400 h'],
   ['With Delimitus', 'Connect company login, once', 'about 10 h'],
   ['IT ticket', 'A service request, done by hand', '98 min'],
-  ['With Delimitus', 'Approve in the console'],
+  ['With Delimitus', 'IT review in the console', 'about 15 min'],
 ];
 async function barWidths(page: Page) {
   return page.locator('#bars .bars__v').evaluateAll((bars) =>
@@ -176,10 +176,11 @@ async function barWidths(page: Page) {
   );
 }
 async function expectFullWidth(page: Page) {
-  const [diy, login, ticket] = await barWidths(page);
+  const [diy, login, ticket, review] = await barWidths(page);
   expect(Math.abs(diy.bar - diy.track)).toBeLessThan(1);
   expect(Math.abs(login.bar - Math.max(6, login.track * 0.025))).toBeLessThan(1);
   expect(Math.abs(ticket.bar - ticket.track * 0.98)).toBeLessThan(1);
+  expect(Math.abs(review.bar - review.track * 0.15)).toBeLessThan(1);
 }
 
 test('the chart shows four rows, each with its value and a source', async ({ page }) => {
@@ -189,13 +190,15 @@ test('the chart shows four rows, each with its value and a source', async ({ pag
   for (const [i, [label, sub, value]] of ROWS.entries()) {
     const row = rows.nth(i);
     await expect(row.locator('.bars__l')).toHaveText(`${label} ${sub}`);
-    if (value) await expect(row.locator('.bars__n')).toHaveText(value);
+    await expect(row.locator('.bars__n')).toHaveText(value);
     await expect(row.locator('.bars__src')).not.toBeEmpty();
     await expect(row.locator('.bars__track')).toHaveAttribute('aria-hidden', 'true');
   }
   await expect(page.locator('#bars figure')).toHaveCount(2);
   await expect(page.locator('#bars .bars__src sup')).toHaveText(['1', '2', '3', '4']);
   await expect(page.locator('#bars .bars__notes li')).toHaveCount(4);
+  await expect(page.locator('#bars .bars__src').last()).toHaveText('Our estimate 4');
+  await expect(page.locator('#bars .bars__notes li').last()).toContainText('Our estimate: about 15 minutes');
   await expect(page.locator('#bars figcaption').first()).toContainText('Before the first app');
   await expect(page.locator('#bars figcaption').last()).toContainText('Each request after that');
 });
@@ -216,6 +219,7 @@ test('each Delimitus bar is shorter than its do-it-yourself bar', async ({ page 
   const [diy, login, ticket, approve] = await barWidths(page);
   expect(login.bar).toBeLessThan(diy.bar);
   expect(login.bar).toBeGreaterThanOrEqual(6);
+  expect(approve.bar).toBeGreaterThan(0);
   expect(approve.bar).toBeLessThan(ticket.bar);
 });
 
