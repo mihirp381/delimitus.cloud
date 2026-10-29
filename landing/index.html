@@ -816,30 +816,32 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .trio__fig { margin: auto 0 0; padding-top: 10px; font: 700 2rem/1.1 var(--display); letter-spacing: -0.03em; color: var(--ink); font-variant-numeric: tabular-nums; }
 .trio__fig span { display: block; margin-top: 4px; font: 400 0.85rem/1.4 var(--sans); letter-spacing: 0; color: var(--ink-3); }
 .trio__fig--txt { font-size: 1.1rem; letter-spacing: -0.015em; }
-.bars { display: flex; flex-direction: column; gap: 18px; padding: clamp(20px, 3vw, 32px); border-radius: var(--r-xl); background: var(--card); }
-.bars__k { margin: 0; font: 600 clamp(1.15rem, 1.8vw, 1.4rem)/1.3 var(--display); letter-spacing: -0.02em; color: var(--ink); text-wrap: balance; }
-.bars__panels { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
-.bars__fig { margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-.bars__u { margin-bottom: 2px; font: 600 0.78rem var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
-.bars__row { display: grid; grid-template-columns: 5.2em minmax(0, 1fr) 5em; align-items: center; gap: 12px; }
-.bars__row--diy { --tone: var(--t-orange); --fill: var(--s-orange); --tint: var(--orange-soft); }
-.bars__row--dlm { --tone: var(--t-blue); --fill: var(--s-blue); }
-.bars__l { margin: 0; font-size: 0.9rem; font-weight: 600; white-space: nowrap; color: var(--tone); }
-.bars__track { container-type: inline-size; height: 14px; border-radius: 7px; background: var(--overlay); overflow: hidden; }
-.bars__v { display: block; width: 0; height: 100%; border-radius: inherit; overflow: hidden; background: var(--fill); }
-.bars__v--range { width: 100%; background: repeating-linear-gradient(-45deg, var(--fill) 0 2px, var(--tint) 2px 6px); }
-.bars__v--range::before { content: ""; display: block; width: 60cqw; height: 100%; background: var(--fill); }
-.bars__v--login { width: max(6px, 2.5%); }
-.bars__v--ticket { width: 98%; }
-.bars__v--review { width: 15%; }
-.bars__n { margin: 0; text-align: right; white-space: nowrap; font: 700 0.95rem/1.2 var(--display); letter-spacing: -0.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
-.bars__end { margin: 0; font-size: 0.8rem; color: var(--ink-3); }
-.bars__end a { color: var(--accent-ink); }
-/* armed by the script only: each bar grows from 0, 150 ms after the one before */
-.bars.is-armed.is-in .bars__v { transition: width 900ms var(--ease) calc(var(--i, 0) * 150ms); }
-.bars.is-armed:not(.is-in) .bars__v { width: 0; }
-@media (min-width: 900px) { .bars__panels { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(24px, 3vw, 40px); } }
-@media (max-width: 400px) { .bars__row { grid-template-columns: 4.4em minmax(0, 1fr) 4.4em; gap: 10px; } .bars__l { font-size: 0.82rem; } .bars__n { font-size: 0.88rem; } }
+.curve { display: flex; flex-direction: column; gap: 14px; padding: clamp(20px, 3vw, 32px); border-radius: var(--r-xl); background: var(--card); }
+.curve__k { margin: 0; font: 600 clamp(1.15rem, 1.8vw, 1.4rem)/1.3 var(--display); letter-spacing: -0.02em; color: var(--ink); text-wrap: balance; }
+.curve__fig { margin: 0; min-width: 0; }
+.curve__svg { display: block; width: 100%; height: auto; overflow: visible; }
+.curve__svg text { font: 500 12px var(--sans); fill: var(--ink-3); font-variant-numeric: tabular-nums; }
+.curve__grid { stroke: var(--line); }
+.curve__base, .curve__tick { stroke: var(--line-strong); }
+.curve__gap { fill: var(--orange-soft); }
+.curve__ln { fill: none; stroke-width: 3; stroke-linecap: round; }
+.curve__ln--diy { stroke: var(--s-orange); }
+.curve__ln--dlm { stroke: var(--s-blue); }
+.curve__dot--diy { fill: var(--s-orange); }
+.curve__dot--dlm { fill: var(--s-blue); }
+.curve__svg .curve__lab { font: 600 13px var(--sans); fill: var(--ink); }
+.curve__svg .curve__who--diy { fill: var(--t-orange); }
+.curve__svg .curve__who--dlm { fill: var(--t-blue); }
+.curve__svg .curve__save, .curve__svg .curve__n { font-weight: 600; fill: var(--ink-2); }
+.curve__br { fill: none; stroke: var(--ink-3); stroke-width: 1.5; }
+.curve__pop { transform-box: fill-box; transform-origin: 100% 50%; }
+.curve.is-armed:not(.is-done) .curve__pop { transform: scale(0); }
+.curve.is-armed.is-done .curve__pop { transition: transform 450ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+.curve.is-armed.is-done .curve__pop--dlm { transition-delay: 90ms; }
+.curve.is-armed.is-done .curve__pop--gap { transition-delay: 180ms; }
+.curve__end { margin: 0; font-size: 0.8rem; color: var(--ink-3); }
+.curve__end a { color: var(--accent-ink); }
+@media (max-width: 599px) { .curve__ax--r { display: none; } }
 #model, #sources { scroll-margin-top: var(--nav-h); }
 .model .src li { overflow-wrap: anywhere; }
 .model > summary { font-size: 1.05rem; }
@@ -1505,37 +1507,24 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
         <h2 class="h2">Building apps with AI is <span class="grad">easy and fun.</span></h2>
         <p class="lede">Deploying and maintaining hundreds of them is hard and expensive.</p>
       </div>
-      <div class="bars" id="bars">
-        <p class="bars__k">From “it works on my laptop” to “the team can open it”</p>
-        <div class="bars__panels">
-          <figure class="bars__fig">
-            <figcaption class="bars__u">Setup · IT hours</figcaption>
-            <div class="bars__row bars__row--diy" data-claim="src-marmelab">
-              <p class="bars__l">Yourself</p>
-              <div class="bars__track" aria-hidden="true"><span class="bars__v bars__v--range"></span></div>
-              <p class="bars__n">240–400 h</p>
-            </div>
-            <div class="bars__row bars__row--dlm" data-claim="src-forrester-okta">
-              <p class="bars__l">Delimitus</p>
-              <div class="bars__track" aria-hidden="true"><span class="bars__v bars__v--login"></span></div>
-              <p class="bars__n">~10 h</p>
-            </div>
-          </figure>
-          <figure class="bars__fig">
-            <figcaption class="bars__u">Each request · minutes</figcaption>
-            <div class="bars__row bars__row--diy" data-claim="src-metricnet">
-              <p class="bars__l">Yourself</p>
-              <div class="bars__track" aria-hidden="true"><span class="bars__v bars__v--ticket"></span></div>
-              <p class="bars__n">98 min</p>
-            </div>
-            <div class="bars__row bars__row--dlm" data-claim="approve-estimate">
-              <p class="bars__l">Delimitus</p>
-              <div class="bars__track" aria-hidden="true"><span class="bars__v bars__v--review"></span></div>
-              <p class="bars__n" id="approveTime">~15 min</p>
-            </div>
-          </figure>
-        </div>
-        <p class="bars__end" data-claim="approve-estimate">~15 min is our estimate. <a href="#model" id="toSources">Sources and method</a> ↓</p>
+      <div class="curve" id="curve">
+        <p class="curve__k">From “it works on my laptop” to “the team can open it”</p>
+        <figure class="curve__fig" data-claim="cost-line">
+          <svg class="curve__svg" role="img" aria-label="IT hours over 0 to 200 requests: doing it yourself reaches 567 h ($38,533), Delimitus 60 h ($4,080), 507 h less." viewBox="0 0 802 290">
+            <defs><clipPath id="curveClip"><rect x="40" y="0" width="706" height="290"></rect></clipPath></defs>
+            <g class="curve__ax curve__ax--l"><line class="curve__base" x1="40" x2="746" y1="244" y2="244"></line><text x="32" y="248" text-anchor="end">0</text><line class="curve__grid" x1="40" x2="746" y1="174" y2="174"></line><text x="32" y="178" text-anchor="end">200</text><line class="curve__grid" x1="40" x2="746" y1="104" y2="104"></line><text x="32" y="108" text-anchor="end">400</text><line class="curve__grid" x1="40" x2="746" y1="34" y2="34"></line><text x="32" y="38" text-anchor="end">600</text><text x="0" y="12">IT hours</text></g>
+            <g class="curve__ax curve__ax--x"><text x="40" y="262" text-anchor="middle">0</text><text x="216.5" y="262" text-anchor="middle">50</text><text x="393" y="262" text-anchor="middle">100</text><text x="569.5" y="262" text-anchor="middle">150</text><text x="746" y="262" text-anchor="middle">200</text><text x="393" y="284" text-anchor="middle">Requests handled</text></g>
+            <g class="curve__ax curve__ax--r"><line class="curve__tick" x1="746" x2="746" y1="244" y2="34"></line><line class="curve__tick" x1="746" x2="751" y1="192.5" y2="192.5"></line><text x="755" y="196.5">$10k</text><line class="curve__tick" x1="746" x2="751" y1="141.1" y2="141.1"></line><text x="755" y="145.1">$20k</text><line class="curve__tick" x1="746" x2="751" y1="89.6" y2="89.6"></line><text x="755" y="93.6">$30k</text><line class="curve__tick" x1="746" x2="751" y1="38.1" y2="38.1"></line><text x="755" y="42.1">$40k</text><text x="802" y="12" text-anchor="end">At $68 an hour</text></g>
+            <path class="curve__gap" clip-path="url(#curveClip)" d="M40 160L746 45.7L746 223L40 240.5Z"></path>
+            <path class="curve__ln curve__ln--diy" d="M40 160L746 45.7"></path>
+            <path class="curve__ln curve__ln--dlm" d="M40 240.5L746 223"></path>
+            <text class="curve__n" x="48" y="64">200 requests</text>
+            <g class="curve__pop curve__pop--diy"><circle class="curve__dot curve__dot--diy" cx="746" cy="45.7" r="4.5"></circle><text class="curve__lab" x="732" y="36.7" text-anchor="end"><tspan class="curve__who--diy">Yourself</tspan> 567 h · $38,533</text></g>
+            <g class="curve__pop curve__pop--dlm"><circle class="curve__dot curve__dot--dlm" cx="746" cy="223" r="4.5"></circle><text class="curve__lab" x="732" y="214" text-anchor="end"><tspan class="curve__who--dlm">Delimitus</tspan> 60 h · $4,080</text></g>
+            <g class="curve__pop curve__pop--gap"><path class="curve__br" d="M742 54.7H737V214H742"></path><text class="curve__save" x="730" y="147.2" text-anchor="end">507 h of IT time saved</text></g>
+          </svg>
+        </figure>
+        <p class="curve__end" data-claim="approve-estimate">~15 min is our estimate. <a href="#model" id="toSources">Sources and method</a> ↓</p>
       </div>
       <div class="trio">
         <article class="trio__card">
@@ -2000,17 +1989,126 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
     paint();
   }
 
-  /* ── cost: the bars grow once, in view ─────────────────────────────── */
-  var chart = document.getElementById("bars");
-  if (chart && !calm && watching) {
-    each(chart.querySelectorAll(".bars__v"), function (b, i) { b.style.setProperty("--i", String(i)); });
-    chart.classList.add("is-armed");
-    var grown = new IntersectionObserver(function (entries) {
-      if (!entries[0].isIntersecting) { return; }
-      grown.disconnect();
-      chart.classList.add("is-in");
-    }, { threshold: Math.min(0.3, window.innerHeight * 0.5 / chart.offsetHeight) });
-    grown.observe(chart);
+  /* ── cost: IT hours over requests, drawn once in view ───────────────── */
+  /* line:start */
+  var LINE = { diyMin: 98, dlmMin: 15, dlmSetup: 10, requests: 200 };
+  function costLine(setup, rate) {
+    var diy = setup + LINE.requests * LINE.diyMin / 60;
+    var dlm = LINE.dlmSetup + LINE.requests * LINE.dlmMin / 60;
+    return {
+      diy: diy, dlm: dlm,
+      diyH: Math.round(diy), dlmH: Math.round(dlm), savedH: Math.round(diy - dlm),
+      diyUsd: Math.round(diy * rate), dlmUsd: Math.round(dlm * rate)
+    };
+  }
+  /* line:end */
+
+  var curve = document.getElementById("curve");
+  if (curve) {
+    var svg = curve.querySelector("svg");
+    var given = function (k) { return parseFloat(document.querySelector('[data-in="' + k + '"]').defaultValue); };
+    var setupH = given("setup"), rate = given("rate");
+    var cl = costLine(setupH, rate);
+    var usd = function (n) { return "$" + n.toLocaleString("en-US"); };
+    var r1 = function (v) { return Math.round(v * 10) / 10; };
+    var node = function (parent, tag, attrs, text) {
+      var e = document.createElementNS(svg.namespaceURI, tag);
+      Object.keys(attrs).forEach(function (k) { e.setAttribute(k, typeof attrs[k] === "number" ? r1(attrs[k]) : attrs[k]); });
+      if (text !== undefined) { e.textContent = text; }
+      parent.appendChild(e);
+      return e;
+    };
+    var parts = null, prog = 1, drawnW = 0;
+    var frame = function (p) {
+      prog = p;
+      if (!parts) { return; }
+      var e = p < 0.5 ? 2 * p * p : 1 - Math.pow(2 - 2 * p, 2) / 2;
+      parts.clip.setAttribute("width", r1(parts.pw * e));
+      parts.lines.forEach(function (ln) {
+        ln.el.setAttribute("stroke-dasharray", r1(ln.len) + " " + r1(ln.len + 2));
+        ln.el.setAttribute("stroke-dashoffset", r1((ln.len + 1) * (1 - e)));
+      });
+      parts.count.textContent = Math.round(LINE.requests * e) + " requests";
+    };
+    var draw = function () {
+      var W = Math.round(svg.parentNode.getBoundingClientRect().width);
+      if (!W || W === drawnW) { return; }
+      drawnW = W;
+      var narrow = window.matchMedia("(max-width: 599px)").matches;
+      var H = Math.round(Math.min(290, Math.max(250, W * 0.4)));
+      var L = 40, R = narrow ? 14 : 56, T = 34, B = 46, TOP = 600;
+      var pw = W - L - R, ph = H - T - B;
+      var x = function (n) { return L + pw * n / LINE.requests; };
+      var y = function (h) { return T + ph * (1 - h / TOP); };
+      while (svg.lastChild) { svg.removeChild(svg.lastChild); }
+      svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+      var clip = node(node(node(svg, "defs", {}), "clipPath", { id: "curveClip" }), "rect", { x: L, y: 0, width: pw, height: H });
+      var g = node(svg, "g", { "class": "curve__ax curve__ax--l" });
+      [0, 200, 400, 600].forEach(function (h) {
+        node(g, "line", { "class": h ? "curve__grid" : "curve__base", x1: L, x2: L + pw, y1: y(h), y2: y(h) });
+        node(g, "text", { x: L - 8, y: y(h) + 4, "text-anchor": "end" }, String(h));
+      });
+      node(g, "text", { x: 0, y: 12 }, "IT hours");
+      g = node(svg, "g", { "class": "curve__ax curve__ax--x" });
+      [0, 50, 100, 150, 200].forEach(function (n) {
+        node(g, "text", { x: x(n), y: T + ph + 18, "text-anchor": "middle" }, String(n));
+      });
+      node(g, "text", { x: L + pw / 2, y: H - 6, "text-anchor": "middle" }, "Requests handled");
+      if (!narrow) {
+        g = node(svg, "g", { "class": "curve__ax curve__ax--r" });
+        node(g, "line", { "class": "curve__tick", x1: L + pw, x2: L + pw, y1: y(0), y2: y(TOP) });
+        [10000, 20000, 30000, 40000].forEach(function (d) {
+          node(g, "line", { "class": "curve__tick", x1: L + pw, x2: L + pw + 5, y1: y(d / rate), y2: y(d / rate) });
+          node(g, "text", { x: L + pw + 9, y: y(d / rate) + 4 }, "$" + d / 1000 + "k");
+        });
+        node(g, "text", { x: W, y: 12, "text-anchor": "end" }, "At " + usd(rate) + " an hour");
+      }
+      var a = [x(0), y(setupH), x(LINE.requests), y(cl.diy)];
+      var b = [x(0), y(LINE.dlmSetup), x(LINE.requests), y(cl.dlm)];
+      var seg = function (q) { return "M" + r1(q[0]) + " " + r1(q[1]) + "L" + r1(q[2]) + " " + r1(q[3]); };
+      node(svg, "path", { "class": "curve__gap", "clip-path": "url(#curveClip)", d: seg(a) + "L" + r1(b[2]) + " " + r1(b[3]) + "L" + r1(b[0]) + " " + r1(b[1]) + "Z" });
+      var lines = [a, b].map(function (q, i) {
+        return { el: node(svg, "path", { "class": "curve__ln curve__ln--" + (i ? "dlm" : "diy"), d: seg(q) }), len: Math.hypot(q[2] - q[0], q[3] - q[1]) };
+      });
+      var count = node(svg, "text", { "class": "curve__n", x: L + 8, y: T + 30 }, LINE.requests + " requests");
+      var end = function (key, q, name, h, d) {
+        var pop = node(svg, "g", { "class": "curve__pop curve__pop--" + key });
+        node(pop, "circle", { "class": "curve__dot curve__dot--" + key, cx: q[2], cy: q[3], r: 4.5 });
+        var t = node(pop, "text", { "class": "curve__lab", x: q[2] - 14, y: q[3] - 9, "text-anchor": "end" });
+        node(t, "tspan", { "class": "curve__who--" + key }, name);
+        t.appendChild(document.createTextNode(" " + h + " h · " + usd(d)));
+      };
+      end("diy", a, "Yourself", cl.diyH, cl.diyUsd);
+      end("dlm", b, "Delimitus", cl.dlmH, cl.dlmUsd);
+      g = node(svg, "g", { "class": "curve__pop curve__pop--gap" });
+      node(g, "path", { "class": "curve__br", d: "M" + r1(a[2] - 4) + " " + r1(a[3] + 9) + "H" + r1(a[2] - 9) + "V" + r1(b[3] - 9) + "H" + r1(a[2] - 4) });
+      node(g, "text", { "class": "curve__save", x: a[2] - 16, y: a[3] + (b[3] - a[3]) * 0.55 + 4, "text-anchor": "end" }, cl.savedH + " h of IT time saved");
+      parts = { clip: clip, pw: pw, lines: lines, count: count };
+      if (prog < 1) { frame(prog); }
+    };
+    svg.setAttribute("aria-label", "IT hours over 0 to " + LINE.requests + " requests: doing it yourself reaches " + cl.diyH + " h (" + usd(cl.diyUsd) + "), Delimitus " + cl.dlmH + " h (" + usd(cl.dlmUsd) + "), " + cl.savedH + " h less.");
+    var armed = !calm && watching;
+    if (armed) {
+      prog = 0;
+      curve.classList.add("is-armed");
+    }
+    draw();
+    window.addEventListener("resize", draw);
+    if (armed) {
+      var seen = new IntersectionObserver(function (entries) {
+        if (!entries[0].isIntersecting) { return; }
+        seen.disconnect();
+        curve.classList.add("is-in");
+        var t0 = null;
+        var step = function (t) {
+          if (t0 === null) { t0 = t; }
+          frame(Math.min(1, (t - t0) / 2500));
+          if (prog < 1) { requestAnimationFrame(step); } else { curve.classList.add("is-done"); }
+        };
+        requestAnimationFrame(step);
+      }, { threshold: Math.min(0.4, window.innerHeight * 0.5 / curve.offsetHeight) });
+      seen.observe(curve);
+    }
   }
   var toSources = document.getElementById("toSources");
   if (toSources) {

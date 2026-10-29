@@ -164,43 +164,56 @@ test('the list bursts out of the prompt and settles in place', async ({ page }) 
   await expect(page.locator('#burst .burst__url')).toHaveCSS('opacity', '1', { timeout: 4000 });
 });
 
-const ROWS = [
-  ['Yourself', '240–400 h'],
-  ['Delimitus', '~10 h'],
-  ['Yourself', '98 min'],
-  ['Delimitus', '~15 min'],
-];
-async function barWidths(page: Page) {
-  return page.locator('#bars .bars__v').evaluateAll((bars) =>
-    bars.map((b) => ({ bar: b.getBoundingClientRect().width, track: (b.parentElement as Element).getBoundingClientRect().width })),
-  );
-}
-async function expectFullWidth(page: Page) {
-  const [diy, login, ticket, review] = await barWidths(page);
-  expect(Math.abs(diy.bar - diy.track)).toBeLessThan(1);
-  expect(Math.abs(login.bar - Math.max(6, login.track * 0.025))).toBeLessThan(1);
-  expect(Math.abs(ticket.bar - ticket.track * 0.98)).toBeLessThan(1);
-  expect(Math.abs(review.bar - review.track * 0.15)).toBeLessThan(1);
+const ENDS = ['Yourself 567 h · $38,533', 'Delimitus 60 h · $4,080'];
+const GAP = '507 h of IT time saved';
+const SCALED_OUT = 'matrix(0, 0, 0, 0, 0, 0)';
+
+async function curve(page: Page) {
+  return page.locator('#curve svg').evaluate((svg) => {
+    const ln = (k: string) => svg.querySelector(`.curve__ln--${k}`) as SVGPathElement;
+    const pts = (k: string) => (ln(k).getAttribute('d')!.match(/[\d.]+/g) ?? []).map(Number);
+    const off = (k: string) => ln(k).getAttribute('stroke-dashoffset');
+    return {
+      diy: pts('diy'),
+      dlm: pts('dlm'),
+      off: [off('diy'), off('dlm')],
+      count: svg.querySelector('.curve__n')!.textContent,
+      clip: Number(svg.querySelector('#curveClip rect')!.getAttribute('width')),
+      labels: [...svg.querySelectorAll('.curve__lab')].map((t) => t.textContent),
+      gap: svg.querySelector('.curve__save')!.textContent,
+      pops: [...svg.querySelectorAll('.curve__pop')].map((g) => getComputedStyle(g).transform),
+    };
+  });
 }
 
-test('the chart shows four one-line rows and no citations of its own', async ({ page }) => {
+async function expectFinal(page: Page) {
+  await expect.poll(async () => (await curve(page)).pops.every((t) => t === 'none'), { timeout: 4000 }).toBe(true);
+  const c = await curve(page);
+  expect(c.labels).toEqual(ENDS);
+  expect(c.gap).toBe(GAP);
+  expect(c.count).toBe('200 requests');
+  expect(c.off.every((o) => o === null || Number(o) === 0)).toBe(true);
+  expect(c.diy[2]).toBe(c.dlm[2]);
+  expect(c.diy[1]).toBeLessThan(c.dlm[1]);
+  expect(c.diy[3]).toBeLessThan(c.dlm[3]);
+  expect(c.diy[3]).toBeLessThan(c.diy[1]);
+  for (const t of await page.locator('#curve .curve__lab, #curve .curve__save').all()) await expect(t).toBeVisible();
+}
+
+test('the cost chart shows both lines, the gap and the end values', async ({ page }) => {
   await page.goto('/');
-  const rows = page.locator('#bars .bars__row');
-  await expect(rows).toHaveCount(4);
-  for (const [i, [label, value]] of ROWS.entries()) {
-    const row = rows.nth(i);
-    await expect(row.locator('.bars__l')).toHaveText(label);
-    await expect(row.locator('.bars__n')).toHaveText(value);
-    await expect(row.locator('.bars__track')).toHaveAttribute('aria-hidden', 'true');
-    const [l, t, n] = await row.locator('.bars__l, .bars__track, .bars__n').evaluateAll((els) =>
-      els.map((e) => { const r = e.getBoundingClientRect(); return r.top + r.height / 2; }),
-    );
-    expect(Math.abs(l - t)).toBeLessThan(3);
-    expect(Math.abs(n - t)).toBeLessThan(3);
-  }
-  await expect(page.locator('#bars figcaption')).toHaveText(['Setup · IT hours', 'Each request · minutes']);
-  await expect(page.locator('#bars sup, #bars ol, #bars li, #bars .bars__l span')).toHaveCount(0);
-  await expect(page.locator('#bars .bars__end')).toHaveText('~15 min is our estimate. Sources and method ↓');
+  const card = page.locator('#curve');
+  await card.scrollIntoViewIfNeeded();
+  await expect(card).toHaveClass(/is-done/, { timeout: 6000 });
+  await expectFinal(page);
+  const svg = card.locator('svg');
+  await expect(svg).toHaveAttribute('role', 'img');
+  await expect(svg).toHaveAttribute(
+    'aria-label',
+    'IT hours over 0 to 200 requests: doing it yourself reaches 567 h ($38,533), Delimitus 60 h ($4,080), 507 h less.',
+  );
+  await expect(card.locator('.curve__end')).toHaveText('~15 min is our estimate. Sources and method ↓');
+  await expect(page.locator('#bars, .bars')).toHaveCount(0);
 });
 
 test('sources and method opens the cost model and its sources', async ({ page }) => {
@@ -219,49 +232,62 @@ test('sources and method opens the cost model and its sources', async ({ page })
   await expect(cites.nth(3)).toContainText('Our estimate: about 15 minutes');
 });
 
-test('the panels sit side by side from 900px and stack below', async ({ page }) => {
+test('the lines draw from the left once the chart is in view, and end complete', async ({ page }) => {
   await page.goto('/');
-  const [a, b] = await page.locator('#bars figure').evaluateAll((f) => f.map((x) => x.getBoundingClientRect().top));
-  const wide = await page.evaluate(() => matchMedia('(min-width: 900px)').matches);
-  if (wide) expect(b).toBe(a);
-  else expect(b).toBeGreaterThan(a);
-});
-
-test('each Delimitus bar is shorter than its do-it-yourself bar', async ({ page }) => {
-  await page.goto('/');
-  await page.locator('#bars').scrollIntoViewIfNeeded();
-  await expect(page.locator('#bars')).toHaveClass(/is-in/);
-  await page.waitForTimeout(1600);
-  const [diy, login, ticket, approve] = await barWidths(page);
-  expect(login.bar).toBeLessThan(diy.bar);
-  expect(login.bar).toBeGreaterThanOrEqual(6);
-  expect(approve.bar).toBeGreaterThan(0);
-  expect(approve.bar).toBeLessThan(ticket.bar);
-});
-
-test('the bars grow from zero once the chart is in view, and end at full width', async ({ page }) => {
-  await page.goto('/');
-  const chart = page.locator('#bars');
-  await expect(chart).toHaveClass(/is-armed/);
-  await expect(chart).not.toHaveClass(/is-in/);
-  for (const w of await barWidths(page)) expect(w.bar).toBe(0);
-  await chart.scrollIntoViewIfNeeded();
-  await expect(chart).toHaveClass(/is-in/);
-  await expect.poll(async () => (await barWidths(page))[0].bar).toBeGreaterThan(0);
+  const card = page.locator('#curve');
+  await expect(card).toHaveClass(/is-armed/);
+  await expect(card).not.toHaveClass(/is-in/);
+  const before = await curve(page);
+  expect(before.count).toBe('0 requests');
+  expect(before.clip).toBe(0);
+  expect(before.off.every((o) => Number(o) > 0)).toBe(true);
+  expect(before.pops.every((t) => t === SCALED_OUT)).toBe(true);
+  await card.scrollIntoViewIfNeeded();
+  await expect(card).toHaveClass(/is-in/);
   await expect.poll(async () => {
-    const [diy] = await barWidths(page);
-    return Math.round(diy.track - diy.bar);
-  }, { timeout: 4000 }).toBe(0);
-  await page.waitForTimeout(1200);
-  await expectFullWidth(page);
-  expect(await page.locator('#bars .bars__v').evaluateAll((b) => b.every((x) => getComputedStyle(x).opacity === '1'))).toBe(true);
+    const c = await curve(page);
+    const n = parseInt(c.count ?? '', 10);
+    return n > 0 && n < 200 && c.clip > 0 && Number(c.off[0]) > 0 && c.pops.every((t) => t === SCALED_OUT);
+  }, { intervals: [50], timeout: 3000 }).toBe(true);
+  await expect(card).toHaveClass(/is-done/, { timeout: 5000 });
+  await expectFinal(page);
 });
 
-test('the bars grow when the page opens on the chart', async ({ page }) => {
+test('the chart plays when the page opens on it', async ({ page }) => {
   await page.goto('/#cost');
-  await expect(page.locator('#bars')).toHaveClass(/is-in/);
-  await page.waitForTimeout(1600);
-  await expectFullWidth(page);
+  await expect(page.locator('#curve')).toHaveClass(/is-in/);
+  await expect(page.locator('#curve')).toHaveClass(/is-done/, { timeout: 5000 });
+  await expectFinal(page);
+});
+
+test('the chart fits its card with readable text and no sideways scroll', async ({ page }) => {
+  await page.goto('/#cost');
+  await expect(page.locator('#curve')).toHaveClass(/is-done/, { timeout: 5000 });
+  await expectFinal(page);
+  const fit = await page.locator('#curve svg').evaluate((svg) => {
+    const box = svg.getBoundingClientRect();
+    const scale = (svg as SVGSVGElement).getScreenCTM()!.a;
+    const texts = [...svg.querySelectorAll('text')].filter((t) => t.getClientRects().length);
+    const r = (sel: string) => svg.querySelector(sel)!.getBoundingClientRect();
+    const apart = (a: DOMRect, b: DOMRect) => a.bottom <= b.top || b.bottom <= a.top || a.right <= b.left || b.right <= a.left;
+    const [diy, dlm] = [...svg.querySelectorAll('.curve__lab')].map((t) => t.getBoundingClientRect());
+    return {
+      scroll: document.documentElement.scrollWidth - innerWidth,
+      smallest: Math.min(...texts.map((t) => parseFloat(getComputedStyle(t).fontSize) * scale)),
+      inside: texts.every((t) => {
+        const b = t.getBoundingClientRect();
+        return b.left >= box.left - 1 && b.right <= box.right + 1 && b.top >= box.top - 1 && b.bottom <= box.bottom + 1;
+      }),
+      apart: apart(diy, dlm) && apart(diy, r('.curve__save')) && apart(dlm, r('.curve__save')),
+      right: svg.querySelectorAll('.curve__ax--r').length,
+      narrow: matchMedia('(max-width: 599px)').matches,
+    };
+  });
+  expect(fit.scroll).toBe(0);
+  expect(fit.smallest).toBeGreaterThanOrEqual(11);
+  expect(fit.inside).toBe(true);
+  expect(fit.apart).toBe(true);
+  expect(fit.right).toBe(fit.narrow ? 0 : 1);
 });
 
 const opacity = (el: Element) => getComputedStyle(el).opacity;
@@ -326,14 +352,16 @@ test.describe('reduced motion', () => {
     await expect(nodes).toHaveCount(5);
     for (const node of await nodes.all()) expect(await node.getAttribute('class')).toContain('is-done');
   });
-  test('shows the bars at full width with no animation', async ({ page }) => {
+  test('shows the finished chart with no animation', async ({ page }) => {
     await page.goto('/');
-    await expect(page.locator('#bars')).not.toHaveClass(/is-armed/);
-    await expectFullWidth(page);
-    await page.locator('#bars').scrollIntoViewIfNeeded();
+    await expect(page.locator('#curve')).not.toHaveClass(/is-armed/);
+    await expectFinal(page);
+    expect((await curve(page)).off).toEqual([null, null]);
+    await page.locator('#curve').scrollIntoViewIfNeeded();
     await page.waitForTimeout(200);
-    for (const bar of await page.locator('#bars .bars__v').all()) expect(await bar.evaluate(running)).toBe(0);
-    await expectFullWidth(page);
+    for (const g of await page.locator('#curve .curve__pop').all()) expect(await g.evaluate(running)).toBe(0);
+    await expect(page.locator('#curve')).not.toHaveClass(/is-done/);
+    await expectFinal(page);
   });
   test('shows the three hero steps lit at once', async ({ page }) => {
     await page.goto('/');
@@ -375,10 +403,10 @@ test.describe('without JavaScript', () => {
     await expect(page.locator('#term .chat__url')).toBeVisible();
   });
 
-  test('shows the bars at full width', async ({ page }) => {
+  test('shows the finished chart', async ({ page }) => {
     await page.goto('/');
-    await expect(page.locator('#bars .bars__row')).toHaveCount(4);
-    await expectFullWidth(page);
+    await expectFinal(page);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0);
   });
 
   test('sends the form as a plain post the server takes', async ({ page }, info) => {

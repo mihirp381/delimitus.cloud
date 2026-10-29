@@ -66,9 +66,12 @@ redirected to the apex by the service.
   JavaScript off the markup holds the whole conversation and the lit pipeline.
   The team cards swap with a short fade and their list items step in; under reduced motion they
   swap at once, and with JavaScript off the warehouse asks are in the markup.
-  The cost section's bar chart grows each bar from the left, 150 ms apart, once it is in view, once
-  per page load, with no fade. Under reduced motion, or with no IntersectionObserver, and with
-  JavaScript off, the bars show at full width.
+  The cost section's line chart draws both lines from the left over 2.5 s once it is in view, once
+  per page load, with the shaded gap and the request counter in step; the end labels and the
+  bracket then scale in, with no fade. The script computes every plotted number from the
+  calculator's setup and rate defaults and a small constants object, and lays the chart out at
+  the card's width; the markup holds the same chart, drawn at 1440 px, for JavaScript off. Under
+  reduced motion or with no IntersectionObserver the chart shows its final state.
   Its "Sources and method" link opens the cost model and its sources and scrolls there; with
   JavaScript off it only jumps to the cost model.
 

@@ -186,6 +186,9 @@ def _pairs() -> list[tuple[str, str]]:
         (t["t-violet"], t["violet-soft"]),
         (t["accent-ink"], t["accent-soft"]),
         (t["ink-2"], t["accent-soft"]),
+        (t["ink"], t["orange-soft"]),
+        (t["ink-2"], t["orange-soft"]),
+        (t["t-blue"], t["orange-soft"]),
         ("#FFFFFF", t["accent"]),
         ("#FFFFFF", t["accent-hi"]),
         ("#FFFFFF", t["t-blue"]),
@@ -322,6 +325,7 @@ REMOVED = (
     "Measured: one prompt to a running preview",
     'id="race"',
     "data-race",
+    'id="bars"',
 )
 ADDED = (
     "Secure data connections",
@@ -368,8 +372,8 @@ def test_the_case_panel_shows_the_warehouse_asks_without_javascript() -> None:
     assert "Company login on, with no setup" in simple[2]
 
 
-def _bars() -> str:
-    found = re.search(r'<div class="bars" id="bars">.*?\n      </div>\n', HTML, flags=re.S)
+def _curve() -> str:
+    found = re.search(r'<div class="curve" id="curve">.*?\n      </div>\n', HTML, flags=re.S)
     assert found is not None
     return found[0]
 
@@ -378,35 +382,6 @@ def _sources() -> str:
     found = re.search(r'<details class="src" id="sources">.*?</details>', HTML, flags=re.S)
     assert found is not None
     return found[0]
-
-
-def test_the_cost_chart_shows_four_one_line_rows() -> None:
-    card = _bars()
-    rows = re.findall(
-        r'<div class="bars__row bars__row--(diy|dlm)" data-claim="([^"]+)">\s*'
-        r'<p class="bars__l">([^<]+)</p>\s*'
-        r'<div class="bars__track" aria-hidden="true"><span class="[^"]+"></span></div>\s*'
-        r'<p class="bars__n"[^>]*>([^<]+)</p>\s*</div>',
-        card,
-    )
-    assert rows == [
-        ("diy", "src-marmelab", "Yourself", "240–400 h"),
-        ("dlm", "src-forrester-okta", "Delimitus", "~10 h"),
-        ("diy", "src-metricnet", "Yourself", "98 min"),
-        ("dlm", "approve-estimate", "Delimitus", "~15 min"),
-    ]
-    assert re.findall(r'<figcaption class="bars__u">([^<]+)</figcaption>', card) == [
-        "Setup · IT hours",
-        "Each request · minutes",
-    ]
-    for gone in ("<sup", "<ol", "<li", "bars__src", "bars__notes", "<span>", "http"):
-        assert gone not in card
-    end = re.search(r'<p class="bars__end" data-claim="approve-estimate">(.*?)</p>', card)
-    assert end is not None
-    assert (
-        end[1]
-        == '~15 min is our estimate. <a href="#model" id="toSources">Sources and method</a> ↓'
-    )
 
 
 def test_the_chart_citations_are_in_the_sources_details() -> None:
@@ -429,23 +404,127 @@ def test_the_chart_citations_are_in_the_sources_details() -> None:
     assert "footnote" not in HTML
 
 
-def test_the_bars_are_drawn_to_their_scales() -> None:
-    assert 'bars__v--range::before { content: ""; display: block; width: 60cqw;' in HTML
-    assert ".bars__v--login { width: max(6px, 2.5%); }" in HTML
-    assert ".bars__v--ticket { width: 98%; }" in HTML
-    assert ".bars__v--review { width: 15%; }" in HTML
-    for word in ("caution", "race"):
-        assert word not in _bars()
+def _half_up(v: float) -> int:
+    return int(v + 0.5)
+
+
+def _line() -> tuple[dict[str, int], int, int]:
+    block = re.search(r"/\* line:start \*/(.*?)/\* line:end \*/", HTML, flags=re.S)
+    assert block is not None
+    consts = re.search(r"var LINE = \{([^}]*)\}", block[1])
+    assert consts is not None
+    defaults = {k: int(v) for v, k in re.findall(r'value="(\d+)" data-in="(\w+)"', HTML)}
+    return (
+        {k: int(v) for k, v in re.findall(r"(\w+): (\d+)", consts[1])},
+        defaults["setup"],
+        defaults["rate"],
+    )
+
+
+def _ends() -> dict[str, str]:
+    c, setup, rate = _line()
+    diy = setup + c["requests"] * c["diyMin"] / 60
+    dlm = c["dlmSetup"] + c["requests"] * c["dlmMin"] / 60
+    return {
+        "diy": f"Yourself {_half_up(diy)} h · ${_half_up(diy * rate):,}",
+        "dlm": f"Delimitus {_half_up(dlm)} h · ${_half_up(dlm * rate):,}",
+        "gap": f"{_half_up(diy - dlm)} h of IT time saved",
+        "aria": f"IT hours over 0 to {c['requests']} requests: doing it yourself reaches"
+        f" {_half_up(diy)} h (${_half_up(diy * rate):,}), Delimitus {_half_up(dlm)} h"
+        f" (${_half_up(dlm * rate):,}), {_half_up(diy - dlm)} h less.",
+    }
+
+
+def test_the_cost_line_is_built_from_the_sourced_constants() -> None:
+    consts, setup, rate = _line()
+    assert consts == {"diyMin": 98, "dlmMin": 15, "dlmSetup": 10, "requests": 200}
+    assert (setup, rate) == (240, 68)
+    assert 'var setupH = given("setup"), rate = given("rate");' in HTML
+    assert "var cl = costLine(setupH, rate);" in HTML
+
+
+def test_the_cost_line_end_values() -> None:
+    e = _ends()
+    assert e["diy"] == "Yourself 567 h · $38,533"
+    assert e["dlm"] == "Delimitus 60 h · $4,080"
+    assert e["gap"] == "507 h of IT time saved"
+
+
+def test_the_no_script_chart_matches_the_computed_values() -> None:
+    card, e = _curve(), _ends()
+    labels = [
+        re.sub(r"<[^>]+>", "", t)
+        for t in re.findall(r'<text class="curve__lab"[^>]*>(.*?)</text>', card)
+    ]
+    assert labels == [e["diy"], e["dlm"]]
+    assert re.findall(r'<text class="curve__save"[^>]*>([^<]*)</text>', card) == [e["gap"]]
+    assert re.findall(r'<text class="curve__n"[^>]*>([^<]*)</text>', card) == ["200 requests"]
+    svg = re.search(
+        r'<svg class="curve__svg" role="img" aria-label="([^"]*)" viewBox="0 0 \d+ \d+">', card
+    )
+    assert svg is not None and svg[1] == e["aria"]
+    base = re.search(r'<line class="curve__base" x1="[\d.]+" x2="[\d.]+" y1="([\d.]+)"', card)
+    top = re.search(r'y1="([\d.]+)" y2="[\d.]+"></line><text[^>]*>600</text>', card)
+    assert base is not None and top is not None
+    y0, y600 = float(base[1]), float(top[1])
+
+    def hours(y: str | float) -> float:
+        return 600 * (y0 - float(y)) / (y0 - y600)
+
+    consts, setup, rate = _line()
+    ends = {
+        k: re.search(rf'curve__ln--{k}" d="M[\d.]+ ([\d.]+)L[\d.]+ ([\d.]+)"', card)
+        for k in ("diy", "dlm")
+    }
+    diy, dlm = ends["diy"], ends["dlm"]
+    assert diy is not None and dlm is not None
+    assert abs(hours(diy[1]) - setup) < 0.5
+    assert abs(hours(diy[2]) - (setup + 200 * consts["diyMin"] / 60)) < 0.5
+    assert abs(hours(dlm[1]) - consts["dlmSetup"]) < 0.5
+    assert abs(hours(dlm[2]) - (consts["dlmSetup"] + 200 * consts["dlmMin"] / 60)) < 0.5
+    for k in (10, 20, 30, 40):
+        tick = re.search(rf'<text x="[\d.]+" y="([\d.]+)">\${k}k</text>', card)
+        assert tick is not None
+        assert abs(hours(float(tick[1]) - 4) - k * 1000 / rate) < 0.5
+    assert '<figure class="curve__fig" data-claim="cost-line">' in card
+    assert not re.search(r"\s(style|on[a-z]+)=", card)
+    for gone in ("bars", "<sup", "<ol", "<li>", "<li ", "http", "caution", "race"):
+        assert gone not in card
+    end = re.search(r'<p class="curve__end" data-claim="approve-estimate">(.*?)</p>', card)
+    assert end is not None
+    assert (
+        end[1]
+        == '~15 min is our estimate. <a href="#model" id="toSources">Sources and method</a> ↓'
+    )
+
+
+def test_the_cost_line_claim_shows_its_arithmetic() -> None:
+    register = (LANDING / "CLAIMS.md").read_text(encoding="utf-8")
+    row = re.search(r"^\| `cost-line` \|.*$", register, flags=re.M)
+    assert row is not None
+    for cited in (
+        "src-marmelab",
+        "src-forrester-okta",
+        "src-metricnet",
+        "approve-estimate",
+        "econ-labour",
+    ):
+        assert f"`{cited}`" in row[0]
+    for step in (
+        "240 + 200 × 98 / 60 = 566.7 h",
+        "$38,533",
+        "10 + 200 × 15 / 60 = 60 h",
+        "$4,080",
+        "506.7 h",
+    ):
+        assert step in row[0]
 
 
 def test_the_approval_time_is_our_estimate() -> None:
-    value = re.search(r'<p class="bars__n" id="approveTime">([^<]*)</p>', HTML)
-    assert value is not None
-    assert value[1] == "~15 min"
     note = re.search(r'<li data-claim="approve-estimate">([^<]+)</li>', HTML)
     assert note is not None
     assert "Our estimate: about 15 minutes for IT to review and approve one request" in note[1]
-    assert "~15 min is our estimate." in _bars()
+    assert "~15 min is our estimate." in _curve()
     register = (LANDING / "CLAIMS.md").read_text(encoding="utf-8")
     assert "MEASURE" not in HTML
     assert "MEASURE" not in register
