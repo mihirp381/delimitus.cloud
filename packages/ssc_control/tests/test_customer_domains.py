@@ -17,6 +17,7 @@ from ssc_control.db.domains import (
     domain_of,
     domains_in_state,
     insert_domain,
+    restart_domain,
     update_state,
 )
 from ssc_control.domains.lifecycle import RetireRefusedError, retire, retire_allowed
@@ -352,5 +353,26 @@ async def test_a_domain_never_delegated_is_retired_without_keeping_its_name(
             done = await retire(conn, FakeCellDomains(), row, OPERATOR, datetime.now(UTC))
             assert done.state == "retired"
         assert rows(dsns.app, org, "select suffix from ssc.org_suffix_retired") == []
+    finally:
+        await engine.dispose()
+
+
+async def test_a_restart_keeps_the_cap_a_year_from_the_restart(dsns: Dsns, org: str) -> None:
+    engine = make_engine(dsns.app)
+    suffix = f"tools.{org[4:]}.com"
+    try:
+        async with bound_org(engine, org) as conn:
+            row = await insert_domain(
+                conn, org_id=org, suffix=suffix, zone_name=resource_name(suffix)
+            )
+            long_ago = datetime.now(UTC) - timedelta(days=400)
+            await update_state(
+                conn, org_id=org, domain_id=row.id, state="failed", last_delegated_at=long_ago
+            )
+            await restart_domain(conn, org, row.id, provider=None)
+            row = await update_state(conn, org_id=org, domain_id=row.id, state="pending_dns")
+        now = datetime.now(UTC)
+        assert row.retire_after - now > timedelta(days=360)
+        assert retire_allowed(row, now=now) == "no probe has answered for the domain yet"
     finally:
         await engine.dispose()

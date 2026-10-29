@@ -79,8 +79,8 @@ _UPDATE = text(
     "certificate = coalesce(:certificate, certificate), "
     "provider = coalesce(:provider, provider), "
     "last_delegated_at = coalesce(cast(:delegated as timestamptz), last_delegated_at), "
-    "retire_after = coalesce(cast(:delegated as timestamptz), last_delegated_at, created_at) "
-    "+ interval '12 months', "
+    "retire_after = greatest(coalesce(cast(:delegated as timestamptz), last_delegated_at), "
+    "created_at) + interval '12 months', "
     "updated_at = now() where org_id = :org and id = :id returning "
     "id, org_id, suffix, zone_name, name_servers, state, observed_ns, failure, certificate, "
     "last_delegated_at, retire_after, created_at, updated_at, provider, stalled_at"
@@ -217,7 +217,8 @@ async def update_state(  # noqa: PLR0913
     provider: str | None = None,
 ) -> OrgDomain:
     """Set ``state`` and ``failure`` (None clears it); the rest keep their value when None.
-    ``retire_after`` follows ``last_delegated_at``, or ``created_at`` until it is set."""
+    ``retire_after`` follows the later of ``last_delegated_at`` and ``created_at``, which a
+    restart resets."""
     observed = (
         None
         if observed_ns is None
