@@ -8,7 +8,7 @@ CREATE TABLE ssc.form_target (
     AND origin ~ '^https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'),
   created_at     timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (org_id, environment_id, origin),
-  FOREIGN KEY (org_id, environment_id) REFERENCES ssc.environment (org_id, id)
+  FOREIGN KEY (org_id, environment_id) REFERENCES ssc.environment (org_id, id) ON DELETE CASCADE
 );
 
 CREATE TRIGGER form_target_refuse_truncate

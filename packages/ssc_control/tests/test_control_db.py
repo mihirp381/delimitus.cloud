@@ -2513,6 +2513,11 @@ def test_0049_adds_form_target_and_round_trips(dsns: Dsns) -> None:
     assert run(dsn, None, exists) == [(False,)]
     upgrade(dsn, "0049_form_target")
     assert run(dsn, None, exists) == [(True,)]
+    cascades = (
+        "select confdeltype from pg_constraint "
+        "where conrelid = 'ssc.form_target'::regclass and contype = 'f'"
+    )
+    assert run(dsn, None, cascades) == [("c",)]
     downgrade(dsn, "0048_org_domain_provider")
     assert run(dsn, None, exists) == [(False,)]
     upgrade(dsn, "0049_form_target")
