@@ -1,6 +1,6 @@
 import { keepPreviousData, useInfiniteQuery } from '@tanstack/react-query';
 import { Link, useRouteContext } from '@tanstack/react-router';
-import { useEffect, useId, useState } from 'react';
+import { useId, useState } from 'react';
 import { type RosterFilter, rosterPage, type UserMatch } from '../api/people';
 import { Ago } from '../components/Ago';
 import { Button } from '../components/Button';
@@ -10,9 +10,9 @@ import { Loading } from '../components/Loading';
 import { ProblemNotice } from '../components/ProblemNotice';
 import { Segmented } from '../components/Segmented';
 import { type Column, Table } from '../components/Table';
+import { useSettled } from '../hooks';
 import { PersonDetail, RoleBadge, StateBadge } from './PersonDetail';
 
-const SEARCH_MS = 250;
 type Filter = { readonly value: RosterFilter; readonly label: string };
 const FILTERS: readonly Filter[] = [
   { value: 'active', label: 'Active' },
@@ -23,15 +23,6 @@ const SOCIAL_FILTERS: readonly Filter[] = [
   { value: 'invited', label: 'Invited' },
   { value: 'all', label: 'All' },
 ];
-
-export function useSettled(value: string): string {
-  const [settled, setSettled] = useState(value);
-  useEffect(() => {
-    const timer = window.setTimeout(() => setSettled(value), SEARCH_MS);
-    return () => window.clearTimeout(timer);
-  }, [value]);
-  return settled;
-}
 
 function columns(open: (p: UserMatch) => void): readonly Column<UserMatch>[] {
   return [

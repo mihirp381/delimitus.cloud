@@ -6,7 +6,7 @@ import { rosterPage } from '../api/people';
 import { Button } from '../components/Button';
 import { Loading } from '../components/Loading';
 import { ProblemNotice } from '../components/ProblemNotice';
-import { useSettled } from '../people/Roster';
+import { useSettled } from '../hooks';
 
 interface Props {
   /** Left out of the list: the app's owner now. */
