@@ -281,7 +281,17 @@ function AdminInventory({ filter, env }: { readonly filter: AppFilter; readonly 
     { header: 'App', cell: (app) => <AppName id={app.app_id} slug={app.slug} status={app.status} /> },
     {
       header: 'Owner',
-      cell: (app) => <Person name={app.owner.name} email={app.owner.email} />,
+      cell: (app) => (
+        <>
+          <Person name={app.owner.name} email={app.owner.email} />
+          {app.owner_state === 'active' ? null : (
+            <>
+              {' '}
+              <Badge tone={app.owner_state === 'blocked' ? 'danger' : 'warning'}>No owner. Assign one.</Badge>
+            </>
+          )}
+        </>
+      ),
     },
     ...names.map(envColumn),
     {

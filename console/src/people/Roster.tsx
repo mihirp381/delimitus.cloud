@@ -24,7 +24,7 @@ const SOCIAL_FILTERS: readonly Filter[] = [
   { value: 'all', label: 'All' },
 ];
 
-function useSettled(value: string): string {
+export function useSettled(value: string): string {
   const [settled, setSettled] = useState(value);
   useEffect(() => {
     const timer = window.setTimeout(() => setSettled(value), SEARCH_MS);

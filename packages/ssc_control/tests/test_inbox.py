@@ -517,6 +517,7 @@ def test_the_outbox_keeps_no_address_and_no_body(dsns: Dsns) -> None:
         "user_id",
         "kind",
         "approval_id",
+        "app_id",
         "dedupe_key",
         "state",
         "attempts",

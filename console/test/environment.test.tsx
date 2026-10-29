@@ -345,6 +345,7 @@ const APP = {
   id: APP_ID,
   slug: 'expenses',
   owner_user_id: 'usr_cccccccccccccccccccc',
+  owner_state: 'active',
   status: 'active',
   created_at: '2026-09-28T10:00:00Z',
   environments: [

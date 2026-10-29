@@ -12,6 +12,7 @@ const APP = {
   id: 'app_aaaaaaaaaaaaaaaaaaaa',
   slug: 'expenses',
   owner_user_id: OWNER,
+  owner_state: 'active',
   status: 'active',
   created_at: '2026-09-28T10:00:00Z',
   environments: [
@@ -147,6 +148,7 @@ describe('inventory for an org admin', () => {
       slug,
       status: 'active',
       created_at: '2026-09-28T10:00:00Z',
+      owner_state: 'active',
       owner: { user_id: OWNER, display_name: 'Olivia Owner', name: 'Olivia Owner', email: 'olivia@example.com' },
       last_used_at: null,
       environments: [
@@ -189,6 +191,21 @@ describe('inventory for an org admin', () => {
       environments: [{ environment_id: PROD_ENV, app_id: APP.id, billing: 'instance' }, { environment_id: PREVIEW_ENV, app_id: APP.id, billing: null }],
     });
   const cells = (row: HTMLElement) => within(row).getAllByRole('cell').map((c) => c.textContent);
+
+  it('warns of an app with no owner in the owner cell', async () => {
+    const ownerless = item('ledger', { owner_state: 'ownerless' });
+    start(
+      '/',
+      { 'GET /v1/inventory': () => json(200, { items: [EXPENSES, ownerless], next_cursor: null }), 'GET /v1/usage': usage },
+      signedIn(),
+    );
+    await screen.findByRole('link', { name: 'ledger' });
+    const table = screen.getByRole('table', { name: 'Apps in this organisation' });
+    const [expenses, ledger] = within(table).getAllByRole('row').slice(1) as [HTMLElement, HTMLElement];
+    expect(cells(ledger)[1]).toBe('Olivia Owner No owner. Assign one.');
+    expect(within(ledger).getByText('No owner. Assign one.').classList.contains('badge-warning')).toBe(true);
+    expect(within(expenses).queryByText('No owner. Assign one.')).toBeNull();
+  });
 
   it('shows each app on one row: owner, a chip per environment, last use and access', async () => {
     const { api } = start(

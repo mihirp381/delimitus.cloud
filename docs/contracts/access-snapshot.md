@@ -12,7 +12,7 @@ One JSON object, published as RFC 8785 canonical JSON (`ssc_shared.canonical`). 
 | `org_id` | string | `org_…`. A holder refuses a document for another org. |
 | `version` | int | 1 to 2^53−1, one more than the org's previous published version. `0` means a live evaluation (explain) and is never published. |
 | `compiled_at` | string | RFC 3339 timestamp with offset. |
-| `environments` | object | `env_…` → `{app_id, name, status, floor, timeout_seconds?}`. `name` is `prod` or `preview`; `status` is the app's, `active`, `disabled` or `quarantined` (an app being deleted is written `disabled`, and a deleted app's environments are left out, GA-12); `floor` is the least role that grants access, `user` for prod and `builder` for preview. `timeout_seconds` (since SSC-090) is how long Cloud Run lets one request run on the environment; it is present only when longer than the request-billed 300 seconds (3600 for a session app), and absent means 300. The gateway tells the app `now + min(3600, timeout_seconds)` in `X-SSC-Request-Deadline`. Every environment of the org is listed. |
+| `environments` | object | `env_…` → `{app_id, name, status, floor, timeout_seconds?}`. `name` is `prod` or `preview`; `status` is the app's, `active`, `disabled` or `quarantined` (an app being deleted is written `disabled`, and a deleted app's environments are left out, GA-12), or `owner_needed` (amendment 2026-10-29); `floor` is the least role that grants access, `user` for prod and `builder` for preview. `timeout_seconds` (since SSC-090) is how long Cloud Run lets one request run on the environment; it is present only when longer than the request-billed 300 seconds (3600 for a session app), and absent means 300. The gateway tells the app `now + min(3600, timeout_seconds)` in `X-SSC-Request-Deadline`. Every environment of the org is listed. |
 | `hosts` | object | host label → `env_…`. The host label is the first label of the environment's host (decision 004): the slug for prod, `<slug>--preview` for preview. An environment whose app's slug breaks the slug rule (stored before the rule) has no entry. Filled since SSC-018; the gateway finds an environment by it. Still keyed by the first label since CD-1; the rest of the host is `suffix`. |
 | `grants` | object | `env_…` → list of `{grant_id, role, subject_kind, subject_id}`. `role` is `builder` or `user`; `subject_kind` is `user` (`subject_id` a `usr_…`), `group` (a `grp_…`) or `org` (`subject_id` null). |
 | `groups_by_user` | object | `usr_…` → list of `grp_…`: every group membership in the org. |
@@ -38,6 +38,8 @@ Amendment CD-1 (2026-10-26): `suffix` and `previous_suffixes` are optional membe
 
 Amendment CD-5.2 (2026-10-28): `form_targets` is an optional member on the same terms as `egress`, left out until an environment has a form target, so every document from before keeps its bytes and digest; an explicit `null` is read as absent and never written. A reader older than CD-5.2 refuses a document that carries it, so every cell runs CD-5.2 gateways before the control plane publishes one. Environments of deleted apps are left out with the environments themselves.
 
+Amendment 2026-10-29 (named owner, decision 019): `owner_needed` is a fourth `status`, written for an active app whose owner is not active when the org has no active admin either; `disabled`, `quarantined` and deleting win over it. Only such an app gets it, so every document from before, and every org with an active admin, keeps its bytes and digest. A reader older than this amendment refuses a document that carries it (`status` is a closed set), keeps its last view and, once that is older than its limit, refuses everything: it fails closed. So every cell runs readers that know `owner_needed` (gateway, data gateway, egress proxy) before the control plane publishes one. Every reader treats only `active` as active, so the data gateway and the egress proxy refuse such an environment as not active. The compiler re-reads it whenever an owner or admin may have changed: a user's status or role, an owner transfer, an app's creation.
+
 References must resolve or the document is refused: every `grants` key, `hosts` value, connection `grants` key, `egress` `credentials` key and `form_targets` key is in `environments`, no two connections share a `connection_id`, every `groups_by_user` key and every user grant's subject is in `users`. The document holds ids, states and the names admins give hosts and connections and the allowlisted host names only: no person's name, email, identity subject or group name.
 
 ## Decision
@@ -48,10 +50,11 @@ References must resolve or the document is refused: every `grants` key, `hosts` 
 |---|---|
 | `no_view` | no valid snapshot has been loaded |
 | `unknown_environment` | the environment is not in `environments` |
-| `app_not_active` | the environment's `status` is not `active` |
+| `app_not_active` | the environment's `status` is not `active` or `owner_needed` |
 | `user_not_active` | the user is not in `users`, or is `deactivated` |
 | `no_grant` | no grant names the user, one of the user's groups, or the org |
 | `below_floor` | grants match, but none has a role at or above the floor; `via` lists them |
+| `owner_needed` | the environment's `status` is `owner_needed` and the grants would allow; `via` lists them (since 2026-10-29). The gateway answers the owner-needed page, 403 |
 | `granted` | allowed; `role` is the best counted role and `via` every counted grant, by `grant_id` |
 
 There is no owner or org-admin shortcut: the app's owner and admins need a grant like everyone else. (They may always change sharing; that is the control plane's rule, not the gateway's.)

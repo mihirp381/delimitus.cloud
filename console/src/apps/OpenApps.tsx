@@ -34,7 +34,9 @@ function Access({ app }: { readonly app: UserApp }) {
   );
 }
 
+/** A blocked app is turned off until an org admin assigns it an owner, so it offers no way in. */
 function Open({ app }: { readonly app: UserApp }) {
+  if (app.owner_state === 'blocked') return <Badge tone="danger">Needs an owner</Badge>;
   return (
     <span className="open-buttons">
       {app.environments.map((e) =>

@@ -1064,8 +1064,9 @@ export interface paths {
         get?: never;
         /**
          * Transfer Owner
-         * @description Give the app to another member. ``REFERENCE_NOT_FOUND`` for a user not in the org,
-         *     ``OWNER_NOT_ACTIVE`` for a deactivated one.
+         * @description Give the app to another member. This is also how an app with no active owner
+         *     (`owner_state` `ownerless`) gets one. ``REFERENCE_NOT_FOUND`` for a user not in the org,
+         *     ``OWNER_NOT_ACTIVE`` for one who is not active. Org admins with their own credential only.
          */
         put: operations["transfer_owner_v1_apps__app_id__owner_put"];
         post?: never;
@@ -1845,7 +1846,7 @@ export interface components {
              * Reason
              * @enum {string}
              */
-            reason: "no_view" | "unknown_environment" | "app_not_active" | "user_not_active" | "no_grant" | "below_floor" | "granted";
+            reason: "no_view" | "unknown_environment" | "app_not_active" | "user_not_active" | "no_grant" | "below_floor" | "owner_needed" | "granted";
             /**
              * Role
              * @description The best role granted.
@@ -2028,6 +2029,12 @@ export interface components {
             owner_email: string | null;
             /** Owner Name */
             owner_name: string;
+            /**
+             * Owner State
+             * @description `active`: the owner is active. `ownerless`: the owner is not, and an active admin can assign one (`PUT /v1/apps/{app_id}/owner`); the app still serves. `blocked`: no active admin either, so the gateway and the data gateway refuse it.
+             * @enum {string}
+             */
+            owner_state: "active" | "ownerless" | "blocked";
             /** Owner User Id */
             owner_user_id: string;
             /** Slug */
@@ -3685,6 +3692,12 @@ export interface components {
              */
             last_used_at: string | null;
             owner: components["schemas"]["Owner"];
+            /**
+             * Owner State
+             * @description `active`: the owner is active. `ownerless`: the owner is not, and an active admin can assign one (`PUT /v1/apps/{app_id}/owner`); the app still serves. `blocked`: no active admin either, so the gateway and the data gateway refuse it.
+             * @enum {string}
+             */
+            owner_state: "active" | "ownerless" | "blocked";
             /** Slug */
             slug: string;
             /**
@@ -4657,6 +4670,12 @@ export interface components {
             owner_email: string | null;
             /** Owner Name */
             owner_name: string;
+            /**
+             * Owner State
+             * @description As `AppOut.owner_state`. A `blocked` app is listed with the environments the person would open, but the gateway refuses them until an owner is assigned.
+             * @enum {string}
+             */
+            owner_state: "active" | "ownerless" | "blocked";
             /** Slug */
             slug: string;
             /**

@@ -22,6 +22,7 @@ export function app(status: Status = 'active') {
     owner_user_id: OWNER,
     owner_name: 'Olive Owner',
     owner_email: 'olive@example.com',
+    owner_state: 'active',
     status,
     created_at: '2026-09-28T10:00:00Z',
     environments: [

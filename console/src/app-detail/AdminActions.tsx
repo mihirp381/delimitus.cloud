@@ -8,7 +8,7 @@ import {
   pullKillSwitch,
   transferOwner,
 } from '../api/lifecycle';
-import { findPeople, type Match, USER_ID_PATTERN } from '../api/directory';
+import type { Match } from '../api/directory';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { ConfirmAction } from '../components/ConfirmAction';
@@ -18,7 +18,7 @@ import { ProblemNotice } from '../components/ProblemNotice';
 import { useToast } from '../components/Toast';
 import { DeleteProgress } from './DeleteRun';
 import { KillSwitchProgress } from './KillSwitchRun';
-import { Lookup } from './Lookup';
+import { OwnerPicker } from './OwnerPicker';
 
 const MODE_TEXT: Readonly<Record<KillSwitchMode, { label: string; body: string }>> = {
   disable: {
@@ -32,9 +32,10 @@ const MODE_TEXT: Readonly<Record<KillSwitchMode, { label: string; body: string }
 };
 
 /**
- * The admin-only controls: the kill switch (disable, quarantine), enable, owner transfer, and
- * deleting the app. Nothing shows until `whoami` has loaded; anyone but an admin sees a line
- * instead. The API refuses a non-admin either way.
+ * The admin-only controls: the kill switch (disable, quarantine), enable, owner transfer (or
+ * assigning one to an app with no active owner), and deleting the app. Nothing shows until
+ * `whoami` has loaded; anyone but an admin sees a line instead. The API refuses a non-admin either
+ * way.
  */
 export function AdminActions({ app }: { readonly app: AppOut }) {
   const { queries, isAdmin } = useRouteContext({ from: '/_authed/apps/$appId' });
@@ -170,6 +171,8 @@ function TransferOwner({ app }: { readonly app: AppOut }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const toast = useToast();
+  const assign = app.owner_state !== 'active';
+  const title = assign ? `Assign an owner to ${app.slug}` : `Transfer ${app.slug}`;
 
   function show() {
     setPicked(null);
@@ -206,26 +209,19 @@ function TransferOwner({ app }: { readonly app: AppOut }) {
 
   return (
     <>
-      <Button onClick={show}>Transfer ownership</Button>
-      <Dialog open={open} title={`Transfer ${app.slug}`} onClose={close}>
-        <form className="stack" onSubmit={submit} aria-label={`Transfer ${app.slug}`}>
+      <Button onClick={show}>{assign ? 'Assign owner' : 'Transfer ownership'}</Button>
+      <Dialog open={open} title={title} onClose={close}>
+        <form className="stack" onSubmit={submit} aria-label={title}>
           <p>
-            The new owner must be an active member of the organisation. The app's sharing stays as
-            it is.
+            {assign ? `${app.owner_name} is no longer active. ` : null}The new owner must be an active
+            member of the organisation. The app's sharing stays as it is.
           </p>
-          <Lookup
-            label="New owner: email or usr_ id"
-            placeholder="name@example.com"
-            idPattern={USER_ID_PATTERN}
-            search={(email) => findPeople(api, email)}
-            picked={picked}
-            onPick={setPicked}
-          />
+          <OwnerPicker current={app.owner_user_id} picked={picked} onPick={setPicked} />
           {error ? <ProblemNotice error={error} /> : null}
           <div className="actions">
             <Button onClick={close}>Cancel</Button>
             <Button type="submit" variant="primary" disabled={!picked || busy}>
-              Transfer
+              {assign ? 'Assign' : 'Transfer'}
             </Button>
           </div>
         </form>

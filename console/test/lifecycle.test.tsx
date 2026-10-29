@@ -22,6 +22,7 @@ function app(status: Status = 'active', owner = OWNER) {
     id: APP_ID,
     slug: 'expenses',
     owner_user_id: owner,
+    owner_state: 'active',
     status,
     created_at: '2026-09-28T10:00:00Z',
     environments: [
@@ -933,12 +934,18 @@ describe('admin actions', () => {
     expect(within(admin).queryAllByRole('button')).toHaveLength(0);
   }, 10_000);
 
-  it('transfers the app to a person found by email', async () => {
+  it('transfers the app to an active person picked from the roster', async () => {
     const { api } = start(
       `/apps/${APP_ID}`,
       page({
-        'GET /v1/users': () =>
-          json(200, { users: [{ id: PERSON, display_name: 'Pat', email: 'pat@example.com', role: 'member', status: 'active' }] }),
+        'GET /v1/users': ({ query }) =>
+          json(200, {
+            users: [
+              ...(query.get('q') ? [] : [{ id: OWNER, display_name: 'Olive', email: 'olive@example.com', role: 'admin', status: 'active' }]),
+              { id: PERSON, display_name: 'Pat', email: 'pat@example.com', role: 'member', status: 'active' },
+            ],
+            next_cursor: null,
+          }),
         [`PUT ${APP_PATH}/owner`]: () => json(200, app('active', PERSON)),
       }),
       signedIn(),
@@ -946,17 +953,40 @@ describe('admin actions', () => {
     const admin = await adminPanel();
     fireEvent.click(await within(admin).findByRole('button', { name: 'Transfer ownership' }));
     const dialog = await screen.findByRole('dialog', { name: 'Transfer expenses' });
-    fireEvent.change(within(dialog).getByLabelText('New owner: email or usr_ id'), { target: { value: 'pat@example.com' } });
-    await act(async () => {
-      fireEvent.click(within(dialog).getByRole('button', { name: 'Find' }));
-    });
-    await within(dialog).findByRole('radio', { name: /Pat/ });
+    const choices = await within(dialog).findAllByRole('radio');
+    expect(choices.map((c) => c.closest('label')?.textContent)).toEqual(['Pat · pat@example.com']);
+    expect(api.of('GET', '/v1/users')[0]?.query.get('status')).toBe('active');
+    fireEvent.change(within(dialog).getByLabelText('New owner'), { target: { value: 'pa' } });
+    await waitFor(() => expect(api.of('GET', '/v1/users').some((c) => c.query.get('q') === 'pa')).toBe(true));
+    fireEvent.click(await within(dialog).findByRole('radio', { name: /Pat/ }));
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Transfer' }));
     });
     expect(api.of('PUT', `${APP_PATH}/owner`)[0]?.body).toEqual({ user_id: PERSON });
     expect(await toast()).toBe('expenses now belongs to Pat.');
     expect(screen.getAllByText(PERSON).length).toBeGreaterThan(0);
+  });
+
+  it('picks the one person a typed email names', async () => {
+    const pat = { id: PERSON, display_name: 'Pat', email: 'pat@example.com', role: 'member', status: 'active' };
+    const { api } = start(
+      `/apps/${APP_ID}`,
+      page({
+        'GET /v1/users': ({ query }) => json(200, { users: query.get('q') ? [pat] : [], next_cursor: null }),
+        [`PUT ${APP_PATH}/owner`]: () => json(200, app('active', PERSON)),
+      }),
+      signedIn(),
+    );
+    const admin = await adminPanel();
+    fireEvent.click(await within(admin).findByRole('button', { name: 'Transfer ownership' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Transfer expenses' });
+    expect(await within(dialog).findByText('No other active people.')).toBeTruthy();
+    fireEvent.change(within(dialog).getByLabelText('New owner'), { target: { value: 'PAT@example.com' } });
+    await waitFor(() => expect((within(dialog).getByRole('radio', { name: /Pat/ }) as HTMLInputElement).checked).toBe(true));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Transfer' }));
+    });
+    expect(api.of('PUT', `${APP_PATH}/owner`)[0]?.body).toEqual({ user_id: PERSON });
   });
 
   it('reads the app again when a pull is refused', async () => {
@@ -977,40 +1007,83 @@ describe('admin actions', () => {
     expect(await within(admin).findByRole('button', { name: 'Enable' })).toBeTruthy();
   });
 
-  it('drops a person search that lands after the transfer dialog closed', async () => {
-    const search = held();
-    const { api } = start(`/apps/${APP_ID}`, page({ 'GET /v1/users': search.handler }), signedIn());
-    const admin = await adminPanel();
-    fireEvent.click(await within(admin).findByRole('button', { name: 'Transfer ownership' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Transfer expenses' });
-    fireEvent.change(within(dialog).getByLabelText('New owner: email or usr_ id'), { target: { value: 'pat@example.com' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Find' }));
-    await waitFor(() => expect(api.of('GET', '/v1/users')).toHaveLength(1));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
-    await act(async () => {
-      search.answer(
-        json(200, { users: [{ id: PERSON, display_name: 'Pat', email: 'pat@example.com', role: 'member', status: 'active' }] }),
-      );
+  it('pages through the roster', async () => {
+    const person = (n: number) => ({
+      id: `usr_${String(n).repeat(20)}`,
+      display_name: `Person ${n}`,
+      email: `p${n}@example.com`,
+      role: 'member',
+      status: 'active',
     });
-    fireEvent.click(within(admin).getByRole('button', { name: 'Transfer ownership' }));
-    const again = await screen.findByRole('dialog', { name: 'Transfer expenses' });
-    expect((within(again).getByRole('button', { name: 'Transfer' }) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('shows OWNER_NOT_ACTIVE and keeps the dialog open', async () => {
-    start(
+    const { api } = start(
       `/apps/${APP_ID}`,
-      page({ [`PUT ${APP_PATH}/owner`]: () => problem(422, 'OWNER_NOT_ACTIVE', 'The owner must be an active member.') }),
+      page({
+        'GET /v1/users': ({ query }) =>
+          query.get('cursor')
+            ? json(200, { users: [person(2)], next_cursor: null })
+            : json(200, { users: [person(1)], next_cursor: 'usr_11111111111111111111' }),
+      }),
       signedIn(),
     );
     const admin = await adminPanel();
     fireEvent.click(await within(admin).findByRole('button', { name: 'Transfer ownership' }));
     const dialog = await screen.findByRole('dialog', { name: 'Transfer expenses' });
-    fireEvent.change(within(dialog).getByLabelText('New owner: email or usr_ id'), { target: { value: PERSON } });
+    await within(dialog).findByRole('radio', { name: /Person 1/ });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Load more people' }));
+    await within(dialog).findByRole('radio', { name: /Person 2/ });
+    expect(api.of('GET', '/v1/users')[1]?.query.get('cursor')).toBe('usr_11111111111111111111');
+    expect(within(dialog).queryByRole('button', { name: 'Load more people' })).toBeNull();
+  });
+
+  it('takes a typed usr_ id, and shows OWNER_NOT_ACTIVE with the dialog open', async () => {
+    const { api } = start(
+      `/apps/${APP_ID}`,
+      page({
+        'GET /v1/users': () => json(200, { users: [], next_cursor: null }),
+        [`PUT ${APP_PATH}/owner`]: () => problem(422, 'OWNER_NOT_ACTIVE', 'The owner must be an active member.'),
+      }),
+      signedIn(),
+    );
+    const admin = await adminPanel();
+    fireEvent.click(await within(admin).findByRole('button', { name: 'Transfer ownership' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Transfer expenses' });
+    fireEvent.change(within(dialog).getByLabelText('New owner'), { target: { value: PERSON } });
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Transfer' }));
     });
+    expect(api.of('PUT', `${APP_PATH}/owner`)[0]?.body).toEqual({ user_id: PERSON });
     expect((await within(dialog).findByRole('alert')).textContent).toContain('OWNER_NOT_ACTIVE');
+  });
+
+  it('warns of an app with no owner and offers to assign one', async () => {
+    const ownerless = { ...app('active'), owner_name: 'Olive Owner', owner_state: 'ownerless' };
+    const { api } = start(
+      `/apps/${APP_ID}`,
+      page({
+        [`GET ${APP_PATH}`]: () => json(200, ownerless),
+        'GET /v1/users': () =>
+          json(200, {
+            users: [{ id: PERSON, display_name: 'Pat', email: 'pat@example.com', role: 'member', status: 'active' }],
+            next_cursor: null,
+          }),
+        [`PUT ${APP_PATH}/owner`]: () => json(200, app('active', PERSON)),
+      }),
+      signedIn(),
+    );
+    expect((await screen.findByText('No owner. Assign one.', {}, { timeout: FIRST_RENDER_MS })).closest('.notice')?.textContent).toContain(
+      'Olive Owner is no longer active. An org admin assigns a new owner under Settings.',
+    );
+    const admin = await adminPanel();
+    expect(within(admin).queryByRole('button', { name: 'Transfer ownership' })).toBeNull();
+    fireEvent.click(within(admin).getByRole('button', { name: 'Assign owner' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Assign an owner to expenses' });
+    expect(within(dialog).getByText(/Olive Owner is no longer active/)).toBeTruthy();
+    fireEvent.click(await within(dialog).findByRole('radio', { name: /Pat/ }));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Assign' }));
+    });
+    expect(api.of('PUT', `${APP_PATH}/owner`)[0]?.body).toEqual({ user_id: PERSON });
+    await waitFor(() => expect(screen.queryByText('No owner. Assign one.')).toBeNull());
   });
 });
 
