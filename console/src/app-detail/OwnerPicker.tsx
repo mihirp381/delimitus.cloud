@@ -38,6 +38,14 @@ export function OwnerPicker({ current, picked, onPick }: Props) {
   const people = (list.data?.pages.flatMap((p) => p.users) ?? []).filter((u) => u.id !== current);
   const sameEmail = q && q === typed ? people.filter((u) => u.email.toLowerCase() === typed.toLowerCase()) : [];
   const exact = sameEmail.length === 1 && !list.hasNextPage ? sameEmail[0] : undefined;
+  const shown = !isId && !list.isError && list.data;
+  const status = !shown
+    ? ''
+    : people.length === 0
+      ? q
+        ? `No active person matches ${q}.`
+        : 'No other active people.'
+      : `${people.length} ${people.length === 1 ? 'person' : 'people'}${list.hasNextPage ? ', more follow' : ''}`;
 
   useEffect(() => {
     if (exact) onPick({ id: exact.id, label: exact.display_name || exact.email });
@@ -70,9 +78,7 @@ export function OwnerPicker({ current, picked, onPick }: Props) {
         <ProblemNotice error={list.error} />
       ) : !list.data ? (
         <Loading label="Loading people…" />
-      ) : people.length === 0 ? (
-        <p className="empty">{q ? `No active person matches ${q}.` : 'No other active people.'}</p>
-      ) : (
+      ) : people.length === 0 ? null : (
         <>
           {sameEmail.length > 1 ? <p className="muted">Several people share this address. Pick one.</p> : null}
           <fieldset className="choices">
@@ -95,6 +101,9 @@ export function OwnerPicker({ current, picked, onPick }: Props) {
           </fieldset>
         </>
       )}
+      <p className={!status ? 'visually-hidden' : people.length === 0 ? 'empty' : 'muted count'} aria-live="polite">
+        {status}
+      </p>
       {!isId && list.hasNextPage ? (
         <Button disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>
           {list.isFetchingNextPage ? 'Loading…' : 'Load more people'}

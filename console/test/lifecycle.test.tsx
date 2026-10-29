@@ -1043,6 +1043,23 @@ describe('admin actions', () => {
     expect(await within(admin).findByRole('button', { name: 'Enable' })).toBeTruthy();
   });
 
+  it('announces the picker results as they change', async () => {
+    const pat = { id: PERSON, display_name: 'Pat', email: 'pat@example.com', role: 'member', status: 'active' };
+    start(
+      `/apps/${APP_ID}`,
+      page({ 'GET /v1/users': ({ query }) => json(200, { users: query.get('q') === 'zz' ? [] : [pat], next_cursor: null }) }),
+      signedIn(),
+    );
+    const admin = await adminPanel();
+    fireEvent.click(await within(admin).findByRole('button', { name: 'Transfer ownership' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Transfer expenses' });
+    const live = await within(dialog).findByText('1 person');
+    expect(live.getAttribute('aria-live')).toBe('polite');
+    fireEvent.change(within(dialog).getByLabelText('New owner'), { target: { value: 'zz' } });
+    await waitFor(() => expect(live.textContent).toBe('No active person matches zz.'));
+    expect(within(dialog).queryAllByRole('radio')).toHaveLength(0);
+  });
+
   it('pages through the roster', async () => {
     const person = (n: number) => ({
       id: `usr_${String(n).repeat(20)}`,
