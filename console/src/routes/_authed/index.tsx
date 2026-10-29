@@ -287,7 +287,7 @@ function AdminInventory({ filter, env }: { readonly filter: AppFilter; readonly 
           {app.owner_state === 'active' ? null : (
             <>
               {' '}
-              <Badge tone={app.owner_state === 'blocked' ? 'danger' : 'warning'}>No owner. Assign one.</Badge>
+              <Badge tone="warning">No owner. Assign one.</Badge>
             </>
           )}
         </>
