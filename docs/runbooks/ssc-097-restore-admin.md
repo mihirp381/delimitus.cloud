@@ -4,7 +4,7 @@ An org has no active admin when its directory sync deactivates the only one (dec
 
 `create-org` and `connect` now refuse a founder that WorkOS does not list as an active user of the directory (`docs/runbooks/ssc-064-control-plane.md`, step 10), so this should be rare. When it happens, first find out why the person is not active in the directory, and fix the directory if the cause is there. A restored person is deactivated again by the next full sync (every 6 hours) while the directory still lacks them.
 
-While the org has no active admin, every app whose owner is not active is turned off with the page "This app needs a named owner" (not live yet, decision 019 amendment 2026-10-29). Once you restore an admin, those apps open again at the next snapshot, still without an owner; tell the restored admin to assign each one an owner in the console (the app's Settings, Assign owner).
+While the org has no active admin, every app whose owner is not active is turned off with the page "This app needs a named owner" (not live yet, decision 019 amendment 2026-10-29). A mis-keyed founder deactivated by the first sync therefore turns off the founder's own apps until you restore them. Once you restore an admin, those apps open again at the next snapshot, still without an owner; tell the restored admin to assign each one an owner in the console (the app's Settings, Assign owner).
 
 Run it with the same database role as `connect`: `ssc_app` through the proxy, as in step 10 of the control-plane runbook. There is no API route and no console button.
 
@@ -36,7 +36,7 @@ The command refuses, and writes nothing, for a user of another org, a person wit
 
 ## Record a change that was already made by hand
 
-The audit chain is append-only, so a change made earlier by SQL is recorded by a new event that carries the change's real time. `--already-applied-at` writes exactly one `operator.access` event (with `applied_via` `sql`, the time, your id and the reason) and changes no row. The person must already be an active admin, and the same time is recorded once.
+The audit chain is append-only, so a change made earlier by SQL is recorded by a new event that carries the change's real time. `--already-applied-at` writes exactly one `operator.access` event (with `applied_via` `sql`, the time, your id and the reason) and changes no row. The person must already be an active admin, and the same time is recorded once. It also marks the snapshot dirty, so apps turned off while the org had no active admin open again at the next snapshot.
 
 For the founder's update of the org on 2026-10-06 at about 04:25 UTC, after step 10 is done, as `ssc_app`:
 
