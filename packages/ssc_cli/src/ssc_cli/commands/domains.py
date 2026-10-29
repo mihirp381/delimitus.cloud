@@ -18,6 +18,8 @@ from ssc_contracts.errors import ErrorCode
 
 WAIT_SECONDS: Final = 72 * 3600
 POLL_SECONDS: Final = 30.0
+ZONE_SECONDS: Final = 180
+ZONE_POLL_SECONDS: Final = 5.0
 ENDED: Final = frozenset({"active", "failed"})
 DOMAIN_FAILED: Final = "DOMAIN_FAILED"
 ADMISSION_RULES: Final = (
@@ -160,16 +162,38 @@ def show(ctx: typer.Context, json_mode: JsonOpt = False) -> None:
 @domains_app.command("add")
 def add(ctx: typer.Context, suffix: SuffixArg, json_mode: JsonOpt = False) -> None:
     """Ask for an own address; prints the NS records and a ticket for your IT team."""
-    with handled(json_mode), session(ctx).client() as client:
-        r = result_of(client.api_url, _explained(lambda: client.request_domain(suffix)))
+    s = session(ctx)
+    with handled(json_mode), s.client() as client:
+        d = _explained(lambda: client.request_domain(suffix))
+        r = result_of(client.api_url, _zone_made(client, s.sleep, d))
     if json_mode:
         print_json(r)
         return
     say(f"Asked for {r.suffix}. One DNS change by your IT team; we do the rest.")
+    if not r.name_servers:
+        say(
+            "The cell is still making its zone. Run `ssc domains show` in a minute for the NS "
+            "records and the ticket for your IT team."
+        )
+        return
     _say_records(r)
     say("\nTicket for your IT team:\n")
     say(r.it_ticket or "")
     say("\nFollow it with `ssc domains status --wait`.")
+
+
+def _zone_made(client: ApiClient, sleep: Sleep, d: DomainOut) -> DomainOut:
+    """The answer once the cell has made the zone and named its servers, or after a few minutes."""
+    budget = Budget(ZONE_SECONDS)
+    while (
+        d.delegation is not None
+        and d.delegation.state == "pending_dns"
+        and not d.delegation.name_servers
+        and not budget.used_up
+    ):
+        budget.wait(sleep, ZONE_POLL_SECONDS)
+        d = client.get_domain()
+    return d
 
 
 def _wait(client: ApiClient, sleep: Sleep, seconds: int) -> DomainOut:

@@ -40,7 +40,9 @@ from ssc_control.db import bound_org
 from ssc_control.db.domains import suffix_list
 from ssc_control.domains.probe import DOH_ENDPOINTS, FakeResolver, ProbeError, Resolver
 from ssc_control.domains.provider import OTHER, parent_provider, provider_of
+from ssc_control.domains.tick import tick
 from ssc_control.runtime.cell_domains import FakeCellDomains
+from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.runtime.driver import AppIdentity
 from ssc_control.runtime.reconciler import reconcile_env
 from ssc_control.snapshot.service import compile_lock
@@ -86,6 +88,13 @@ def cell(b: Bench, *, identity: AppIdentity | None = None) -> FakeCellDomains:
     with_api_cell(app, domains=fake, identity=identity, runtime=b.runtime)
     app.state.runtime = replace(app.state.runtime, resolvers=resolvers({"testorg.com": PARENT_NS}))
     return fake
+
+
+async def made(b: Bench, fake: FakeCellDomains) -> Any:
+    """The domain tick's first pass: the cell makes the zone of each new row."""
+    cells = StaticCells(OrgCell(label=STATIC_LABEL, domains=fake))
+    await tick(b.ports.engine, cells, resolvers({"testorg.com": PARENT_NS}), datetime.now(UTC))
+    return get(b, "/v1/domain", b.t.admin).json()["delegation"]
 
 
 def put(b: Bench, suffix: str, token: str) -> Any:
@@ -218,7 +227,15 @@ async def test_an_admin_asks_for_a_domain_once(b: Bench) -> None:
     assert r.status_code == 200, r.text
     body = r.json()
     d = body["delegation"]
-    assert (d["suffix"], d["state"], d["provider"]) == (name(b), "pending_dns", "cloudflare")
+    assert (d["suffix"], d["state"], d["provider"], d["name_servers"]) == (
+        name(b),
+        "pending_dns",
+        None,
+        [],
+    )
+    assert fake.calls == []
+    d = await made(b, fake)
+    assert (d["state"], d["provider"]) == ("pending_dns", "cloudflare")
     assert d["name_servers"] == list(fake.name_servers)
     assert (d["observed_ns"], d["failure"], d["last_delegated_at"]) == (None, None, None)
     assert (body["default_suffix"], body["current_suffix"]) == (default(b), default(b))
@@ -232,8 +249,11 @@ async def test_an_admin_asks_for_a_domain_once(b: Bench) -> None:
         b.w.admin,
         d["id"],
     )
-    assert requested["after"]["provider"] == "cloudflare"
-    assert requested["after"]["name_servers"] == list(fake.name_servers)
+    assert requested["after"] == {
+        "suffix": name(b),
+        "state": "pending_dns",
+        "zone_name": resource_name(name(b)),
+    }
 
     again = put(b, name(b), b.t.admin)
     assert again.status_code == 200
@@ -246,21 +266,21 @@ async def test_an_admin_asks_for_a_domain_once(b: Bench) -> None:
 
 async def test_a_failed_domain_is_replaced(b: Bench) -> None:
     fake = cell(b)
-    first = put(b, name(b), b.t.admin).json()["delegation"]
+    put(b, name(b), b.t.admin)
+    first = await made(b, fake)
     set_state(b, "failed")
     execute(b.dsn, b.w.org, "update ssc.org_domain set failure = 'no delegation seen'")
     again = put(b, name(b), b.t.admin).json()["delegation"]
     assert (again["id"], again["state"], again["failure"]) == (first["id"], "pending_dns", None)
+    assert (again["name_servers"], (await made(b, fake))["name_servers"]) == (
+        [],
+        list(fake.name_servers),
+    )
     set_state(b, "failed")
     other = put(b, name(b, "other"), b.t.admin).json()["delegation"]
     assert (other["suffix"], other["state"]) == (name(b, "other"), "pending_dns")
-    assert fake.calls == [
-        ("create", name(b)),
-        ("retire", name(b)),
-        ("create", name(b)),
-        ("retire", name(b)),
-        ("create", name(b, "other")),
-    ]
+    await made(b, fake)
+    assert fake.calls == [("create", name(b)), ("create", name(b)), ("create", name(b, "other"))]
     states = rows_of(b.dsn, b.w.org, "select suffix, state from ssc.org_domain order by suffix")
     assert states == [
         {"suffix": name(b, "other"), "state": "pending_dns"},
@@ -501,8 +521,8 @@ async def test_retire_asks_the_resolvers_again_and_refuses_while_the_parent_dele
 ) -> None:
     fake = cell(b)
     op = operator(signing_key, b.w.org)
-    d = put(b, name(b), b.t.admin).json()["delegation"]
-    ours = frozenset(d["name_servers"])
+    put(b, name(b), b.t.admin)
+    ours = frozenset((await made(b, fake))["name_servers"])
     gone = '{"cloudflare": [], "google": [], "quad9": []}'
     execute(b.dsn, b.w.org, "update ssc.org_domain set observed_ns = %s::jsonb", gone)
     app = app_of(b)

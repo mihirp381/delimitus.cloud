@@ -8,15 +8,21 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 from ssc_testkit import Dsns, make_org
 
+from ssc_contracts.domains import resource_name
 from ssc_contracts.ids import new_id
 from ssc_control.db import bind_org_sync, bound_org, make_engine
 from ssc_control.db.domains import OrgDomain, domain_of, insert_domain, open_domains
 from ssc_control.domains import jobs
 from ssc_control.domains.probe import DOH_ENDPOINTS, FakeResolver, ProbeError, Resolver
-from ssc_control.domains.tick import NO_DELEGATION, STALLED_MARKER, StallNotice, tick
+from ssc_control.domains.tick import NO_DELEGATION, NO_ZONE, STALLED_MARKER, StallNotice, tick
 from ssc_control.notifications import delivery, messages
 from ssc_control.notifications.mailer import LogMailer, Mail
-from ssc_control.runtime.cell_domains import FAKE_NAME_SERVERS, FakeCellDomains
+from ssc_control.runtime.cell_domains import (
+    FAKE_NAME_SERVERS,
+    CellDomainsError,
+    CreatedDomain,
+    FakeCellDomains,
+)
 from ssc_control.runtime.cells import STATIC_LABEL, OrgCell, StaticCells
 from ssc_control.worker_ports import Ports
 
@@ -97,6 +103,76 @@ async def current(engine: AsyncEngine, org: str) -> OrgDomain:
 
 def cells(fake: FakeCellDomains) -> StaticCells:
     return StaticCells(OrgCell(label=STATIC_LABEL, domains=fake))
+
+
+class Refusing(FakeCellDomains):
+    async def create(self, suffix: str) -> CreatedDomain:
+        raise CellDomainsError("agent down")
+
+    async def retire(self, suffix: str) -> None:
+        raise CellDomainsError("agent down")
+
+
+async def asked(engine: AsyncEngine, org: str) -> OrgDomain:
+    suffix = f"tools.{org[4:]}.com"
+    async with bound_org(engine, org) as conn:
+        return await insert_domain(conn, org_id=org, suffix=suffix, zone_name=resource_name(suffix))
+
+
+async def test_the_tick_has_the_cell_make_a_new_row_s_zone_once(
+    dsns: Dsns, org: str, engine: AsyncEngine
+) -> None:
+    fake = FakeCellDomains()
+    row = await asked(engine, org)
+    parent = resolvers({f"{org[4:]}.com": OTHER_NS})
+    report = await tick(engine, cells(fake), parent, datetime.now(UTC))
+    assert row.id not in report.changed
+    seen = await current(engine, org)
+    assert (seen.state, seen.name_servers, seen.provider) == (
+        "pending_dns",
+        FAKE_NAME_SERVERS,
+        "cloudflare",
+    )
+    assert seen.certificate is not None
+    await tick(engine, cells(fake), parent, datetime.now(UTC))
+    assert fake.calls == [("create", row.suffix)]
+    assert audit(dsns.app, org) == []
+
+
+async def test_a_zone_the_cell_cannot_make_is_asked_again_then_fails(
+    org: str, engine: AsyncEngine
+) -> None:
+    row = await asked(engine, org)
+    await tick(engine, cells(Refusing()), resolvers({}), row.created_at + timedelta(hours=1))
+    seen = await current(engine, org)
+    assert (seen.state, seen.certificate) == ("pending_dns", None)
+    await tick(
+        engine, cells(FakeCellDomains()), resolvers({}), row.created_at + timedelta(hours=72)
+    )
+    assert (await current(engine, org)).certificate is not None
+
+
+async def test_a_zone_never_made_in_72_hours_fails_the_domain(
+    org: str, engine: AsyncEngine
+) -> None:
+    row = await asked(engine, org)
+    await tick(engine, cells(Refusing()), resolvers({}), row.created_at + timedelta(hours=72))
+    seen = await current(engine, org)
+    assert (seen.state, seen.failure) == ("failed", NO_ZONE)
+
+
+async def test_a_failed_domain_s_zone_is_emptied_before_the_row_fails(
+    org: str, engine: AsyncEngine
+) -> None:
+    fake = FakeCellDomains()
+    row = await requested(engine, org, fake)
+    wrong = resolvers({row.suffix: OTHER_NS})
+    late = row.created_at + timedelta(hours=72)
+    await tick(engine, cells(Refusing()), wrong, late)
+    assert (await current(engine, org)).state == "pending_dns"
+    await tick(engine, cells(fake), wrong, late)
+    assert (await current(engine, org)).state == "failed"
+    assert fake.calls[-1] == ("retire", row.suffix)
 
 
 async def test_a_domain_moves_from_pending_to_active(

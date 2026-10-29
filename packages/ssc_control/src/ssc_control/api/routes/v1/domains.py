@@ -1,7 +1,6 @@
 """``/v1/domain``: the org's customer domain (CD-4.2). Active org admins only; changes never in
 an agent session."""
 
-import logging
 from datetime import UTC, datetime
 from typing import Final, Literal
 
@@ -29,15 +28,10 @@ from ssc_control.db.domains import (
 )
 from ssc_control.domains.admission import admit
 from ssc_control.domains.flip import FlipRefusedError, flip
-from ssc_control.domains.provider import parent_provider
 from ssc_control.domains.view import DomainView, NoCellLabelError, live_count, rolling_for, view_of
 from ssc_control.runtime.cell_domains import (
-    CellDomainNotFoundError,
     CellDomains,
-    CellDomainsError,
 )
-
-log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -175,11 +169,12 @@ async def get_domain(request: Request, uow: UserUoW) -> DomainOut:
     responses=problem_responses(*_CHANGE, *_ADMISSION, ErrorCode.ALREADY_EXISTS),
 )
 async def request_domain(request: Request, body: DomainIn, uow: UserUoW) -> DomainOut:
-    """Ask for ``suffix`` as the org's customer domain: the cell makes its zone and
-    certificate, and the answer names the NS records to add at the parent. A name the admission
-    rules refuse answers its own ``DOMAIN_SUFFIX_*`` code. The same suffix again changes nothing;
-    another while one is live is ``ALREADY_EXISTS``, unless that one failed, which it replaces.
-    Audited as ``domain.requested``."""
+    """Ask for ``suffix`` as the org's customer domain. The row is kept as ``pending_dns``; the
+    domain tick has the cell make its zone and certificate within a minute, and then the answer
+    names the NS records to add at the parent. A name the admission rules refuse answers its own
+    ``DOMAIN_SUFFIX_*`` code. The same suffix again changes nothing; another while one is live is
+    ``ALREADY_EXISTS``, unless that one failed, which it replaces. Audited as
+    ``domain.requested``."""
     await _change(uow)
     rt = runtime_of(request)
     refused = await admit(uow.conn, uow.org_id, body.suffix, apps_domain=rt.settings.apps_domain)
@@ -190,53 +185,25 @@ async def request_domain(request: Request, body: DomainIn, uow: UserUoW) -> Doma
         if live.suffix == body.suffix:
             return await domain_out(request, uow)
         raise Refusal(ErrorCode.ALREADY_EXISTS, evidence={"domain_id": live.id})
-    agent = await agent_of(request, uow.org_id)
-    provider = await parent_provider(rt.resolvers, body.suffix)
-    try:
-        row = await _fresh_row(uow, agent, live, body.suffix, provider)
-        made = await agent.create(body.suffix)
-    except CellDomainsError as exc:
-        log.warning("domain request failed at the cell", extra={"error": str(exc)})
-        raise Refusal(ErrorCode.CELL_UNAVAILABLE, evidence={"port": "domains"}) from None
-    row = await update_state(
-        uow.conn,
-        org_id=uow.org_id,
-        domain_id=row.id,
-        state="pending_dns",
-        name_servers=made.name_servers,
-        certificate=made.certificate,
-    )
-    after: dict[str, object] = {
-        "suffix": row.suffix,
-        "state": row.state,
-        "zone_name": row.zone_name,
-        "name_servers": list(row.name_servers),
-    }
-    if provider is not None:
-        after["provider"] = provider
+    await agent_of(request, uow.org_id)
+    row = await _fresh_row(uow, live, body.suffix)
     await uow.audit(
-        AuditAction.DOMAIN_REQUESTED, target_kind="org_domain", target_id=row.id, after=after
+        AuditAction.DOMAIN_REQUESTED,
+        target_kind="org_domain",
+        target_id=row.id,
+        after={"suffix": row.suffix, "state": row.state, "zone_name": row.zone_name},
     )
     return await domain_out(request, uow)
 
 
-async def _fresh_row(
-    uow: UnitOfWork,
-    agent: CellDomains,
-    failed: OrgDomain | None,
-    suffix: str,
-    provider: str | None,
-) -> OrgDomain:
+async def _fresh_row(uow: UnitOfWork, failed: OrgDomain | None, suffix: str) -> OrgDomain:
+    """A failed row's zone was emptied when it failed (``domains.tick``)."""
     if failed is None:
-        return await _insert(uow, suffix, provider)
-    try:
-        await agent.retire(failed.suffix)
-    except CellDomainNotFoundError:
-        pass
+        return await _insert(uow, suffix)
     if failed.suffix == suffix:
         try:
             async with uow.conn.begin_nested():
-                return await restart_domain(uow.conn, uow.org_id, failed.id, provider=provider)
+                return await restart_domain(uow.conn, uow.org_id, failed.id, provider=None)
         except IntegrityError:
             raise Refusal(ErrorCode.ALREADY_EXISTS, evidence={"suffix": suffix}) from None
     await update_state(uow.conn, org_id=uow.org_id, domain_id=failed.id, state="retired")
@@ -247,10 +214,10 @@ async def _fresh_row(
         before={"suffix": failed.suffix, "state": failed.state},
         after={"suffix": failed.suffix, "state": "retired"},
     )
-    return await _insert(uow, suffix, provider)
+    return await _insert(uow, suffix)
 
 
-async def _insert(uow: UnitOfWork, suffix: str, provider: str | None) -> OrgDomain:
+async def _insert(uow: UnitOfWork, suffix: str) -> OrgDomain:
     try:
         async with uow.conn.begin_nested():
             return await insert_domain(
@@ -258,7 +225,6 @@ async def _insert(uow: UnitOfWork, suffix: str, provider: str | None) -> OrgDoma
                 org_id=uow.org_id,
                 suffix=suffix,
                 zone_name=resource_name(suffix),
-                provider=provider,
             )
     except IntegrityError:
         raise Refusal(ErrorCode.ALREADY_EXISTS, evidence={"suffix": suffix}) from None

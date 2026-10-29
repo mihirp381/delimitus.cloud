@@ -77,6 +77,7 @@ _UPDATE = text(
     "observed_ns = coalesce(cast(:observed as jsonb), observed_ns), "
     "name_servers = coalesce(cast(:ns as text[]), name_servers), "
     "certificate = coalesce(:certificate, certificate), "
+    "provider = coalesce(:provider, provider), "
     "last_delegated_at = coalesce(cast(:delegated as timestamptz), last_delegated_at), "
     "retire_after = coalesce(cast(:delegated as timestamptz), last_delegated_at, created_at) "
     "+ interval '12 months', "
@@ -213,6 +214,7 @@ async def update_state(  # noqa: PLR0913
     last_delegated_at: datetime | None = None,
     name_servers: Sequence[str] | None = None,
     certificate: str | None = None,
+    provider: str | None = None,
 ) -> OrgDomain:
     """Set ``state`` and ``failure`` (None clears it); the rest keep their value when None.
     ``retire_after`` follows ``last_delegated_at``, or ``created_at`` until it is set."""
@@ -229,6 +231,7 @@ async def update_state(  # noqa: PLR0913
         "observed": observed,
         "ns": None if name_servers is None else list(name_servers),
         "certificate": certificate,
+        "provider": provider,
         "delegated": last_delegated_at,
     }
     return _row((await conn.execute(_UPDATE, params)).one())

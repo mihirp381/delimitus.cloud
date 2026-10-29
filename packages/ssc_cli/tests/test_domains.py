@@ -5,7 +5,7 @@ import json
 import httpx2
 import pytest
 
-from ssc_cli.commands.domains import ADMISSION_RULES, POLL_SECONDS
+from ssc_cli.commands.domains import ADMISSION_RULES, POLL_SECONDS, ZONE_POLL_SECONDS
 from ssc_cli.credentials import SERVICE
 from ssc_cli.errors import ExitCode
 from ssc_cli.session import Session
@@ -25,7 +25,7 @@ def _domain(state: str | None = None, *, current: str = DEFAULT, **extra: object
             "id": "odm_aaaaaaaaaaaaaaaaaaaa",
             "suffix": SUFFIX,
             "state": state,
-            "name_servers": NS,
+            "name_servers": extra.pop("name_servers", NS),
             "observed_ns": extra.pop("observed_ns", None),
             "failure": extra.pop("failure", None),
             "provider": "cloudflare",
@@ -97,6 +97,35 @@ def test_add_puts_the_suffix_and_prints_the_ticket(cli, api):
     )
     assert out.records == [f"{SUFFIX} NS {ns}" for ns in NS]
     assert out.it_ticket is not None and out.it_ticket.startswith("Please add")
+
+
+def test_add_waits_for_the_cell_to_name_the_zone_s_servers(cli, api):
+    slept: list[float] = []
+    api.add("PUT", "/v1/domain", _ok(_domain("pending_dns", name_servers=[])))
+    api.add(
+        "GET",
+        "/v1/domain",
+        _ok(_domain("pending_dns", name_servers=[])),
+        _ok(_domain("pending_dns")),
+    )
+    session = Session(
+        api_override="https://api.test",
+        transport=httpx2.MockTransport(api.handler),
+        sleep=slept.append,
+    )
+    r = cli("domains", "add", SUFFIX, session=session)
+    assert r.code == 0, r.stderr
+    assert f"{SUFFIX} NS {NS[0]}" in r.stdout
+    assert slept == [ZONE_POLL_SECONDS, ZONE_POLL_SECONDS]
+
+
+def test_add_says_when_the_zone_is_not_made_yet(cli, api):
+    api.add("PUT", "/v1/domain", _ok(_domain("pending_dns", name_servers=[])))
+    api.add("GET", "/v1/domain", _ok(_domain("pending_dns", name_servers=[])))
+    r = cli("domains", "add", SUFFIX, session=api.session())
+    assert r.code == 0, r.stderr
+    assert "still making its zone" in r.stdout
+    assert "Please add" not in r.stdout
 
 
 def test_add_refused_names_the_rules(cli, api, fake_problem):

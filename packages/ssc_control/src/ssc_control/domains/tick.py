@@ -1,8 +1,9 @@
-"""The delegation tick (CD-4.1): ``pending_dns`` to ``issuing`` when every resolver answers our
+"""The delegation tick (CD-4.1): a ``pending_dns`` row with no certificate yet has the cell
+make its zone and certificate; ``pending_dns`` to ``issuing`` when every resolver answers our
 name servers, ``issuing`` to ``active`` or ``failed`` on the certificate's state, ``failed`` after
-72 hours without a delegation. ``active`` and ``failed`` queue a mail to every active admin; a
-stall also mails the operator when a notice is given. Network calls run before the row's
-transaction; one row's error never stops the others."""
+72 hours without a delegation, once the cell has emptied the zone. ``active`` and ``failed``
+queue a mail to every active admin; a stall also mails the operator when a notice is given.
+Network calls run before the row's transaction; one row's error never stops the others."""
 
 import logging
 from collections.abc import Mapping
@@ -24,10 +25,16 @@ from ssc_control.db.domains import (
     update_state,
 )
 from ssc_control.domains.probe import ProbeError, Resolver, delegation_seen, observe
+from ssc_control.domains.provider import parent_provider
 from ssc_control.notifications import messages
 from ssc_control.notifications import service as outbox
 from ssc_control.notifications.mailer import Mail, Mailer
-from ssc_control.runtime.cell_domains import CellDomainNotFoundError, CellDomainsError
+from ssc_control.runtime.cell_domains import (
+    CellDomainNotFoundError,
+    CellDomains,
+    CellDomainsError,
+    CreatedDomain,
+)
 from ssc_control.runtime.cells import CellPorts, CellUnavailableError
 
 log = logging.getLogger("ssc.domains")
@@ -36,6 +43,7 @@ TICK_ACTOR: Final = Actor(ActorKind.OPERATOR, "system:domains_tick")
 PENDING_LIMIT: Final = timedelta(hours=72)
 STALL_AFTER: Final = timedelta(minutes=120)
 NO_DELEGATION: Final = "no delegation seen in 72 hours"
+NO_ZONE: Final = "the cell did not make the zone in 72 hours"
 NO_CERTIFICATE: Final = "the cell has no certificate for the domain"
 CERTIFICATE_FAILED: Final = "the certificate failed"
 STALLED_MARKER: Final = "domain_stalled"
@@ -53,6 +61,8 @@ class Step:
     observed: Mapping[str, frozenset[str]] | None = None
     failure: str | None = None
     delegated: bool = False
+    made: CreatedDomain | None = None
+    provider: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -104,11 +114,49 @@ async def _step(
     resolvers: Mapping[str, Resolver],
     now: datetime,
 ) -> Step | None:
+    if row.state == "pending_dns" and row.certificate is None:
+        return await _create(row, cells, resolvers, now)
     if row.state == "pending_dns":
-        return await _pending(row, resolvers, now)
-    if row.state == "issuing":
-        return await _issuing(row, cells)
-    return None
+        step = await _pending(row, resolvers, now)
+    elif row.state == "issuing":
+        step = await _issuing(row, cells)
+    else:
+        return None
+    if step is not None and step.state == "failed" and not await _emptied(row, cells):
+        return None
+    return step
+
+
+async def _agent(row: OrgDomain, cells: CellPorts | None) -> CellDomains | None:
+    return None if cells is None else (await cells.for_org(row.org_id)).domains
+
+
+async def _create(
+    row: OrgDomain, cells: CellPorts | None, resolvers: Mapping[str, Resolver], now: datetime
+) -> Step | None:
+    try:
+        agent = await _agent(row, cells)
+        made = None if agent is None else await agent.create(row.suffix)
+    except (CellUnavailableError, CellDomainsError) as exc:
+        log.warning("domain zone not made: %s", exc, extra={"domain_id": row.id})
+        made = None
+    if made is None:
+        return Step("failed", failure=NO_ZONE) if now - row.created_at >= PENDING_LIMIT else None
+    return Step("pending_dns", made=made, provider=await parent_provider(resolvers, row.suffix))
+
+
+async def _emptied(row: OrgDomain, cells: CellPorts | None) -> bool:
+    """A failed domain's zone is emptied before the row says so; False to try again."""
+    try:
+        agent = await _agent(row, cells)
+        if agent is not None:
+            await agent.retire(row.suffix)
+    except CellDomainNotFoundError:
+        pass
+    except (CellUnavailableError, CellDomainsError) as exc:
+        log.warning("domain zone not emptied: %s", exc, extra={"domain_id": row.id})
+        return False
+    return True
 
 
 async def _pending(row: OrgDomain, resolvers: Mapping[str, Resolver], now: datetime) -> Step:
@@ -126,7 +174,7 @@ async def _pending(row: OrgDomain, resolvers: Mapping[str, Resolver], now: datet
 
 async def _issuing(row: OrgDomain, cells: CellPorts | None) -> Step | None:
     try:
-        agent = None if cells is None else (await cells.for_org(row.org_id)).domains
+        agent = await _agent(row, cells)
         if agent is None:
             return None
         status = await agent.status(row.suffix)
@@ -149,6 +197,8 @@ async def _apply(
         row = await lock_domain(conn, seen.org_id, seen.id)
         if row is None or row.state != seen.state:
             return None
+        if step.made is not None:
+            return await _made(conn, row, step)
         if step.state == row.state:
             outcome = await _keep(conn, row, step, now)
         else:
@@ -166,6 +216,22 @@ async def _apply(
             extra={"domain_id": row.id, "org_id": row.org_id},
         )
     return outcome
+
+
+async def _made(conn: AsyncConnection, row: OrgDomain, step: Step) -> None:
+    if row.certificate is not None or step.made is None:
+        return
+    await update_state(
+        conn,
+        org_id=row.org_id,
+        domain_id=row.id,
+        state=row.state,
+        failure=row.failure,
+        name_servers=step.made.name_servers,
+        certificate=step.made.certificate,
+        provider=step.provider,
+    )
+    log.info("domain %s: zone made", row.id, extra={"domain_id": row.id, "org_id": row.org_id})
 
 
 async def _keep(conn: AsyncConnection, row: OrgDomain, step: Step, now: datetime) -> str | None:
@@ -250,6 +316,7 @@ async def _mail_stalled(notice: StallNotice, row: OrgDomain) -> None:
 
 __all__ = [
     "NO_DELEGATION",
+    "NO_ZONE",
     "PENDING_LIMIT",
     "STALLED_MARKER",
     "STALL_AFTER",

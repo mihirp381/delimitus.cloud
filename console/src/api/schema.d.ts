@@ -1360,11 +1360,12 @@ export interface paths {
         get: operations["get_domain_v1_domain_get"];
         /**
          * Request Domain
-         * @description Ask for ``suffix`` as the org's customer domain: the cell makes its zone and
-         *     certificate, and the answer names the NS records to add at the parent. A name the admission
-         *     rules refuse answers its own ``DOMAIN_SUFFIX_*`` code. The same suffix again changes nothing;
-         *     another while one is live is ``ALREADY_EXISTS``, unless that one failed, which it replaces.
-         *     Audited as ``domain.requested``.
+         * @description Ask for ``suffix`` as the org's customer domain. The row is kept as ``pending_dns``; the
+         *     domain tick has the cell make its zone and certificate within a minute, and then the answer
+         *     names the NS records to add at the parent. A name the admission rules refuse answers its own
+         *     ``DOMAIN_SUFFIX_*`` code. The same suffix again changes nothing; another while one is live is
+         *     ``ALREADY_EXISTS``, unless that one failed, which it replaces. Audited as
+         *     ``domain.requested``.
          */
         put: operations["request_domain_v1_domain_put"];
         post?: never;
