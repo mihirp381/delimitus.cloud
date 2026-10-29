@@ -70,6 +70,7 @@ KILLS = {
     "a suspended connection": ({"sales": "suspended"}, "CONNECTION_SUSPENDED"),
     "a disabled app": ({"status": "disabled"}, "APP_NOT_ACTIVE"),
     "a quarantined app": ({"status": "quarantined"}, "APP_NOT_ACTIVE"),
+    "an app that needs an owner": ({"status": "owner_needed"}, "APP_NOT_ACTIVE"),
 }
 
 

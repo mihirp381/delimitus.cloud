@@ -4,7 +4,8 @@
 reads the recipient's address only now, sends, and marks the row. A failure backs off 2, 4, 8
 and 16 minutes and the fifth marks the row ``failed``; it never touches the approval. A row
 whose request was decided meanwhile, or whose recipient left, is deleted unsent, as is a
-domain mail whose recipient is no longer an admin. Logs name the
+domain or ownerless-app mail whose recipient is no longer an admin, and an ownerless-app mail
+whose app has an active owner again or is deleted. Logs name the
 row and the error type, never an address, a message or the server's reply.
 """
 
@@ -25,18 +26,24 @@ from ssc_control.notifications import service as outbox
 log = logging.getLogger(__name__)
 
 DOMAIN_KINDS: Final = {"domain_active": "active", "domain_failed": "failed"}
+ADMIN_KINDS: Final = frozenset({*DOMAIN_KINDS, "app_ownerless"})
 BATCH: Final = 50
 MAX_ATTEMPTS: Final = 5
 REMIND_AFTER_HOURS: Final = 72
 KEEP_DAYS: Final = 30
 
 _DUE = text(
-    "select id, user_id, kind, approval_id, attempts from ssc.notification_outbox "
+    "select id, user_id, kind, approval_id, app_id, attempts from ssc.notification_outbox "
     "where state = 'pending' and next_attempt_at <= now() order by created_at, id "
     "limit :limit for update skip locked"
 )
 _RECIPIENT = text(
     "select email, role, status from ssc.user_account where org_id = :org and id = :id"
+)
+_OWNERLESS_APP = text(
+    "select a.slug from ssc.app a where a.org_id = :org and a.id = :id "
+    "and a.status <> 'deleted' and not exists (select 1 from ssc.user_account u "
+    "where u.org_id = a.org_id and u.id = a.owner_user_id and u.status = 'active')"
 )
 _SENT = text(
     "update ssc.notification_outbox set state = 'sent', sent_at = now(), attempts = attempts + 1 "
@@ -98,9 +105,23 @@ async def _waiting(
 
 
 async def _org_mail(  # noqa: PLR0913, PLR0917
-    conn: AsyncConnection, org_id: str, to: str, kind: str, console_url: str, mail_from: str | None
+    conn: AsyncConnection,
+    org_id: str,
+    to: str,
+    row: Mapping[Any, Any],
+    console_url: str,
+    mail_from: str | None,
 ) -> mailer.Mail | None:
-    """A mail about the org, not a request: the welcome, or its own address's outcome."""
+    """A mail about the org, not a request: the welcome, its own address's outcome, or an app
+    with no owner."""
+    kind = str(row["kind"])
+    if kind == "app_ownerless":
+        app = {"org": org_id, "id": row["app_id"]}
+        slug = (await conn.execute(_OWNERLESS_APP, app)).scalar_one_or_none()
+        if slug is None:
+            return None
+        subject, body = messages.app_ownerless(slug, str(row["app_id"]), console_url)
+        return mailer.Mail(to=to, subject=subject, body=body)
     if kind == "welcome":
         subject, body = messages.welcome(console_url, org_id, mail_from=mail_from)
         return mailer.Mail(to=to, subject=subject, body=body)
@@ -125,11 +146,11 @@ async def _build(
     """The mail for one outbox row, or None when it is no longer worth sending."""
     who = (await conn.execute(_RECIPIENT, {"org": org_id, "id": row["user_id"]})).first()
     kind = str(row["kind"])
-    if who is None or who[2] != "active" or (kind in DOMAIN_KINDS and who[1] != "admin"):
+    if who is None or who[2] != "active" or (kind in ADMIN_KINDS and who[1] != "admin"):
         return None
     to = str(who[0])
-    if kind == "welcome" or kind in DOMAIN_KINDS:
-        return await _org_mail(conn, org_id, to, kind, console_url, mail_from)
+    if kind == "welcome" or kind in ADMIN_KINDS:
+        return await _org_mail(conn, org_id, to, row, console_url, mail_from)
     if kind == "digest":
         waiting = await _waiting(conn, org_id, str(row["user_id"]), admin=who[1] == "admin")
         if not waiting:

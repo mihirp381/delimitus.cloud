@@ -1,11 +1,12 @@
 """The one access evaluator (SSC-021, decision 019), on hand-built ``ssc-snapshot/v1`` documents."""
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 import pytest
+from pydantic import ValidationError
 
-from ssc_contracts.snapshot import FORMAT_V1, SnapshotDoc
+from ssc_contracts.snapshot import FORMAT_V1, EnvId, SnapshotDoc, SnapshotEnvironment
 from ssc_shared.access import AccessView, SnapshotInvalidError, ViewHolder, decide
 from ssc_shared.canonical import canonical_bytes
 from ssc_shared.runtime import REQUEST_TIMEOUT_SECONDS, SESSION_TIMEOUT_SECONDS
@@ -92,6 +93,38 @@ def test_a_grant_below_the_floor_counts_for_nothing() -> None:
     assert [g.grant_id for g in d.via] == [gnt(4)]
     assert decide(view(), PREVIEW, DEE).reason == "no_grant"
     assert decide(view(), PREVIEW, ADA).allowed is True
+
+
+def needing_an_owner() -> dict[str, Any]:
+    return {k: {**e, "status": "owner_needed"} for k, e in doc()["environments"].items()}
+
+
+def test_an_app_that_needs_an_owner_refuses_those_its_grants_admit() -> None:
+    v = view(environments=needing_an_owner())
+    d = decide(v, PROD, ADA)
+    assert (d.allowed, d.role, d.reason) == (False, None, "owner_needed")
+    assert [g.grant_id for g in d.via] == [gnt(2), gnt(3)]
+    assert decide(v, PREVIEW, ADA).reason == "owner_needed"
+    assert decide(v, PREVIEW, BEN).reason == "below_floor"
+    assert decide(v, PREVIEW, DEE).reason == "no_grant"
+    assert decide(v, PROD, CY).reason == "user_not_active"
+    assert not v.environments[PROD].active
+    assert v.environments[PROD].owner_needed
+
+
+def test_a_reader_from_before_owner_needed_refuses_the_document() -> None:
+    """Criterion 7: a pre-amendment reader refuses the document and keeps its last view, which
+    goes stale and is refused (the gateway's ``max_stale``, the data gateway's staleness)."""
+
+    class OldEnvironment(SnapshotEnvironment):
+        status: Literal["active", "disabled", "quarantined"]  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    class OldDoc(SnapshotDoc):
+        environments: dict[EnvId, OldEnvironment]  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    OldDoc.model_validate_json(canonical_bytes(doc(1)))
+    with pytest.raises(ValidationError):
+        OldDoc.model_validate_json(canonical_bytes(doc(2, environments=needing_an_owner())))
 
 
 def test_an_environment_with_no_grants_refuses() -> None:

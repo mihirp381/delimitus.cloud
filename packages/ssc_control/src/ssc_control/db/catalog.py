@@ -80,6 +80,8 @@ at request time and when a stalled certificate was first logged.
 Revision 0049 adds ``form_target`` (CD-5.2), keyed by org, environment and origin, so it is in
 ``UNKEYED_TABLES``: origins an environment's forms may post to, nothing else.
 Revision 0050 adds the ``domain_active`` and ``domain_failed`` outbox kinds (CD-6.3).
+Revision 0051 adds the ``app_ownerless`` outbox kind and ``notification_outbox.app_id``, the app
+whose owner left (decision 019 amendment 2026-10-29).
 """
 
 from collections.abc import Mapping

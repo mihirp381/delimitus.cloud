@@ -3,16 +3,18 @@
 A person is found by ``(issuer, subject)`` through ``identity_link``, never by email. Every
 change is audited in the caller's transaction. A change that alters what the gateway decides (a
 new user, a status change, a membership change) also marks the org's access snapshot dirty in
-that transaction (decision 019). A deactivation, a role change or a removal from a group pauses the
-schedules whose owner or declarer lost authority by it (``timers.service.pause_blocked``, decision
-020), and a deactivation revokes every session and token the person holds
-(``identity.sessions.revoke_user``, SSC-019). A membership change re-checks the ceiling of every
-connection that lists the group: an environment now over it is flagged and its app's owner asks
-the connection's owner (``connections.service.recheck_group``, GA-5.3). The database refuses
-demoting or deleting the org's last active admin (SC002, ``LAST_ORG_ADMIN``); deactivating them
-is allowed, and an operator restores an admin (decision 024). Two first syncs of one identity
-racing each other end with one unique violation (``ALREADY_EXISTS``); the directory retries and
-finds the user.
+that transaction (decision 019), as does a role change, which can leave an app with no owner
+and no admin (``owner_needed``). A deactivation tells every active admin about each app the
+person owned (``notifications.service.owner_left``). A deactivation, a role change or a removal
+from a group pauses the schedules whose owner or declarer lost authority by it
+(``timers.service.pause_blocked``, decision 020), and a deactivation revokes every session and
+token the person holds (``identity.sessions.revoke_user``, SSC-019). A membership change
+re-checks the ceiling of every connection that lists the group: an environment now over it is
+flagged and its app's owner asks the connection's owner (``connections.service.recheck_group``,
+GA-5.3). The database refuses demoting or deleting the org's last active admin (SC002,
+``LAST_ORG_ADMIN``); deactivating them is allowed, and an operator restores an admin (decision
+024). Two first syncs of one identity racing each other end with one unique violation
+(``ALREADY_EXISTS``); the directory retries and finds the user.
 """
 
 from collections.abc import Mapping, Sequence
@@ -27,6 +29,7 @@ from ssc_contracts.ids import new_id
 from ssc_control.audit.chain import Actor, NewEvent, append_event
 from ssc_control.connections.service import recheck_group
 from ssc_control.identity.sessions import revoke_user
+from ssc_control.notifications.service import owner_left
 from ssc_control.snapshot.service import mark_dirty
 from ssc_control.timers.service import pause_blocked
 
@@ -241,6 +244,8 @@ async def upsert_user(
             before={"role": role} if role_changed else None,
             after={"role": user.role} if role_changed else None,
         )
+        if role_changed:
+            await mark_dirty(conn, org_id)
     if status != user.status:
         await _status_changed(conn, org_id, user_id, status, user.status, actor)
     if (role, status) != (user.role, user.status):
@@ -264,6 +269,7 @@ async def _status_changed(  # noqa: PLR0913, PLR0917
     await mark_dirty(conn, org_id)
     if after == "deactivated":
         await revoke_user(conn, org_id, user_id, "user_deactivated", actor=actor)
+        await owner_left(conn, org_id=org_id, owner_id=user_id)
 
 
 async def set_status(

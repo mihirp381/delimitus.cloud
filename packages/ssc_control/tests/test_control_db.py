@@ -2590,6 +2590,78 @@ def test_a_domain_mail_needs_no_approval(dsns: Dsns) -> None:
         assert refused(dsns.app, org.org_id, insert, approval) == CHECK_VIOLATION
 
 
+def test_0051_adds_the_ownerless_mail_and_round_trips(dsns: Dsns) -> None:
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute(f"create database app_ownerless owner {MIGRATE_ROLE}")
+    dsn = make_url(dsns.migrate).set(database="app_ownerless").render_as_string(hide_password=False)
+    app = make_url(dsns.app).set(database="app_ownerless").render_as_string(hide_password=False)
+    kinds = (
+        "select pg_get_constraintdef(oid) from pg_constraint "
+        "where conrelid = 'ssc.notification_outbox'::regclass "
+        "and conname = 'notification_outbox_kind_check'"
+    )
+    upgrade(dsn, "0051_app_ownerless")
+    assert "'app_ownerless'" in run(dsn, None, kinds)[0][0]
+    org = make_org(app, "Ownerless")
+    (aid,) = run(
+        app,
+        org.org_id,
+        "insert into ssc.app (id, org_id, slug, owner_user_id) values (%s, %s, 'ledger', %s) "
+        "returning id",
+        (new_id("app"), org.org_id, org.admin_user_id),
+    )[0]
+    run(
+        app,
+        org.org_id,
+        "insert into ssc.notification_outbox (id, org_id, user_id, kind, app_id, dedupe_key) "
+        "values (%s, %s, %s, 'app_ownerless', %s, 'app_ownerless:x') returning id",
+        (new_id("ntf"), org.org_id, org.admin_user_id, aid),
+    )
+    downgrade(dsn, "0050_domain_mail")
+    assert "'app_ownerless'" not in run(dsn, None, kinds)[0][0]
+    assert run(app, org.org_id, "select count(*) from ssc.notification_outbox") == [(0,)]
+    upgrade(dsn, "0051_app_ownerless")
+    assert "'app_ownerless'" in run(dsn, None, kinds)[0][0]
+
+
+def test_an_ownerless_mail_names_its_app_and_needs_no_approval(dsns: Dsns) -> None:
+    org = make_org(dsns.app, "Ownerless mail")
+    (aid,) = run(
+        dsns.app,
+        org.org_id,
+        "insert into ssc.app (id, org_id, slug, owner_user_id) values (%s, %s, 'ledger', %s) "
+        "returning id",
+        (new_id("app"), org.org_id, org.admin_user_id),
+    )[0]
+    insert = (
+        "insert into ssc.notification_outbox "
+        "(id, org_id, user_id, kind, approval_id, app_id, dedupe_key) "
+        "values (%s, %s, %s, %s, %s, %s, %s)"
+    )
+
+    def row(kind: str, approval: str | None, app_id: str | None) -> tuple[object, ...]:
+        return (
+            new_id("ntf"),
+            org.org_id,
+            org.admin_user_id,
+            kind,
+            approval,
+            app_id,
+            f"{kind}:{secrets.token_hex(4)}",
+        )
+
+    ok = row("app_ownerless", None, aid)
+    assert run(dsns.app, org.org_id, insert + " returning kind", ok) == [("app_ownerless",)]
+    for bad in (
+        row("app_ownerless", None, None),
+        row("app_ownerless", new_id("apr"), aid),
+        row("welcome", None, aid),
+    ):
+        assert refused(dsns.app, org.org_id, insert, bad) == CHECK_VIOLATION
+    unknown = row("app_ownerless", None, new_id("app"))
+    assert refused(dsns.app, org.org_id, insert, unknown) == FOREIGN_KEY_VIOLATION
+
+
 def test_0045_backfills_invite_domains_and_round_trips(dsns: Dsns) -> None:
     with psycopg.connect(dsns.superuser, autocommit=True) as conn:
         conn.execute(f"create database invite_domains owner {MIGRATE_ROLE}")

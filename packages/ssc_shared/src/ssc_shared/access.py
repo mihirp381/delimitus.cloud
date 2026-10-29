@@ -3,6 +3,9 @@
 The control plane's explain endpoint and the gateway (SSC-018) both call :func:`decide` on an
 :class:`AccessView` built from an ``ssc-snapshot/v1`` document; nothing else decides access.
 There is no owner or org-admin shortcut: everyone, the app's owner included, needs a grant.
+An app with no active owner in an org with no active admin is refused to everyone the grants
+would admit with ``owner_needed`` (decision 019 amendment 2026-10-29); everyone else gets the
+usual refusal.
 """
 
 from collections.abc import Mapping
@@ -31,6 +34,7 @@ Reason = Literal[
     "user_not_active",
     "no_grant",
     "below_floor",
+    "owner_needed",
     "granted",
 ]
 
@@ -62,7 +66,8 @@ class AccessDecision:
 @dataclass(frozen=True, slots=True)
 class EnvironmentIndex:
     """One environment's grants, split by subject for lookup. ``timeout_seconds`` is the
-    document's, or ``REQUEST_TIMEOUT_SECONDS`` when it has none."""
+    document's, or ``REQUEST_TIMEOUT_SECONDS`` when it has none. ``owner_needed`` is an app
+    with no active owner and no active admin to assign one; it is never ``active``."""
 
     app_id: str
     name: EnvironmentName
@@ -72,6 +77,7 @@ class EnvironmentIndex:
     by_user: Mapping[str, tuple[GrantRef, ...]]
     by_group: Mapping[str, tuple[GrantRef, ...]]
     timeout_seconds: int = REQUEST_TIMEOUT_SECONDS
+    owner_needed: bool = False
 
 
 def _index(doc: SnapshotDoc, env_id: str) -> EnvironmentIndex:
@@ -95,6 +101,7 @@ def _index(doc: SnapshotDoc, env_id: str) -> EnvironmentIndex:
         by_user=MappingProxyType({k: tuple(v) for k, v in by_user.items()}),
         by_group=MappingProxyType({k: tuple(v) for k, v in by_group.items()}),
         timeout_seconds=env.timeout_seconds or REQUEST_TIMEOUT_SECONDS,
+        owner_needed=env.status == "owner_needed",
     )
 
 
@@ -184,7 +191,7 @@ def _refusal(view: AccessView | None, environment_id: str, user_id: str) -> Reas
     env = view.environments.get(environment_id)
     if env is None:
         return "unknown_environment"
-    if not env.active:
+    if not env.active and not env.owner_needed:
         return "app_not_active"
     if user_id not in view.active_users:
         return "user_not_active"
@@ -204,6 +211,8 @@ def decide(view: AccessView | None, environment_id: str, user_id: str) -> Access
     counted = tuple(g for g in matching if RANK[g.role] >= floor)
     if not counted:
         return AccessDecision(allowed=False, role=None, via=matching, reason="below_floor")
+    if env.owner_needed:
+        return AccessDecision(allowed=False, role=None, via=counted, reason="owner_needed")
     best = max(counted, key=lambda g: RANK[g.role]).role
     return AccessDecision(allowed=True, role=best, via=counted, reason="granted")
 

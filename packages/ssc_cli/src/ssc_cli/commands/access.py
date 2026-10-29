@@ -131,7 +131,7 @@ def explain(
     )
 
 
-def _sentence(r: AccessResult) -> str:
+def _sentence(r: AccessResult) -> str:  # noqa: PLR0911  (one sentence per reason)
     who, where = r.user_id, f"{r.environment} of {r.slug}"
     match r.reason:
         case "granted":
@@ -145,6 +145,11 @@ def _sentence(r: AccessResult) -> str:
             return f"{who} cannot open {where}: no grant names them, a group of theirs or the org."
         case "app_not_active":
             return f"{who} cannot open {where}: the app is stopped, so no one can."
+        case "owner_needed":
+            return (
+                f"{who} cannot open {where}: the app has no active owner and the org no active "
+                "admin, so no one can."
+            )
         case "user_not_active":
             return f"{who} cannot open {where}: they are deactivated."
         case _:

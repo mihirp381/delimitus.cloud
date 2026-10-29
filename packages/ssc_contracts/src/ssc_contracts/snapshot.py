@@ -49,7 +49,7 @@ Sha1Digest = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9+/]{27}=$")]
 
 GrantRole = Literal["builder", "user"]
 SubjectKind = Literal["user", "group", "org"]
-AppStatus = Literal["active", "disabled", "quarantined"]
+AppStatus = Literal["active", "disabled", "quarantined", "owner_needed"]
 UserStatus = Literal["active", "deactivated"]
 ConnectionStatus = Literal["active", "suspended"]
 
@@ -99,7 +99,8 @@ class _Frozen(BaseModel):
 class SnapshotEnvironment(_Frozen):
     """One app environment. ``floor`` is the lowest role that grants access to it.
     ``timeout_seconds``: how long one request to it may run (SSC-090). Left out when unset, which
-    means the request-billed figure, so documents without it keep their bytes."""
+    means the request-billed figure, so documents without it keep their bytes. ``owner_needed``
+    (amendment 2026-10-29): an active app with no active owner and no active admin; refused."""
 
     app_id: AppId
     name: EnvironmentName

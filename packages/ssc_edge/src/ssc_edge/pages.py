@@ -34,6 +34,11 @@ LOGIN_FAILED: Final = _page(
     " back to the app and try again.",
 )
 UNAVAILABLE: Final = _page("Unavailable", "This app cannot be reached right now. Try again soon.")
+OWNER_NEEDED: Final = _page(
+    "This app needs a named owner",
+    "This app has no owner right now, so it is turned off. Ask your organisation's admin to"
+    " assign an owner.",
+)
 WAKE_RETRY_SECONDS: Final = 2
 WAKING: Final = _page(
     "Waking up",

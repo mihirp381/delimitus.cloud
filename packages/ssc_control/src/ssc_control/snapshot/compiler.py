@@ -54,13 +54,15 @@ _INSERT = text(
 # One statement, so one read snapshot: every grant's environment and user is in the result, and
 # every proxy credential's environment. A deleted app's environments are left out (GA-12): its
 # slug may be another app's by now. Retired suffixes past their time, or current again, are left
-# out.
+# out. Each environment carries whether its app's owner is active, and the last column whether
+# the org has an active admin (decision 019 amendment 2026-10-29).
 _READ_ORG = text(
     "select "
     "(select coalesce(jsonb_agg(jsonb_build_array(e.id, e.app_id, e.name, a.status, a.slug, "
-    "e.request_timeout_seconds) order by e.id), '[]') from ssc.environment e join ssc.app a "
-    "on a.org_id = e.org_id and a.id = e.app_id where e.org_id = :org "
-    "and a.status <> 'deleted'), "
+    "e.request_timeout_seconds, o.status = 'active') order by e.id), '[]') "
+    "from ssc.environment e join ssc.app a on a.org_id = e.org_id and a.id = e.app_id "
+    "join ssc.user_account o on o.org_id = a.org_id and o.id = a.owner_user_id "
+    "where e.org_id = :org and a.status <> 'deleted'), "
     "(select coalesce(jsonb_agg(jsonb_build_array(g.id, g.environment_id, g.role, "
     "g.subject_kind, coalesce(g.user_id, g.group_id)) order by g.environment_id, g.id), '[]') "
     "from ssc.app_grant g where g.org_id = :org), "
@@ -89,7 +91,9 @@ _READ_ORG = text(
     "order by until desc, suffix desc limit :previous) r), "
     "(select coalesce(jsonb_agg(jsonb_build_array(t.environment_id, t.origin) "
     "order by t.environment_id, t.origin collate \"C\"), '[]') from ssc.form_target t "
-    "where t.org_id = :org)"
+    "where t.org_id = :org), "
+    "exists (select 1 from ssc.user_account u where u.org_id = :org and u.role = 'admin' "
+    "and u.status = 'active')"
 )
 
 
@@ -150,10 +154,15 @@ def _connections(linked: list[list[Any]], known: Collection[str]) -> dict[str, A
     }
 
 
-def _status(status: str) -> str:
+def _status(status: str, *, owner_active: bool, admin_active: bool) -> str:
     """An app being deleted is denied exactly as a disabled one is: ``ssc-snapshot/v1`` has
-    no word of its own for it, and its readers need none."""
-    return "disabled" if status == "deleting" else status
+    no word of its own for it, and its readers need none. An active app is ``owner_needed``
+    while its owner is not active and no active admin is left to assign one."""
+    if status == "deleting":
+        return "disabled"
+    if status == "active" and not owner_active and not admin_active:
+        return "owner_needed"
+    return status
 
 
 def _longer_timeout(seconds: int | None) -> int | None:
@@ -178,19 +187,20 @@ async def compile_document(
         suffix,
         retired,
         form_targets,
+        admin_active,
     ) = (await conn.execute(_READ_ORG, read)).one()
     environments: dict[str, Any] = {
         env_id: {
             "app_id": app_id,
             "name": name,
-            "status": _status(status),
+            "status": _status(status, owner_active=owner_active, admin_active=admin_active),
             "floor": floor_of(name),
             "timeout_seconds": _longer_timeout(timeout),
         }
-        for env_id, app_id, name, status, _, timeout in envs
+        for env_id, app_id, name, status, _, timeout, owner_active in envs
     }
     hosts: dict[str, str] = {}
-    for env_id, _, name, _, slug, _ in envs:
+    for env_id, _, name, _, slug, _, _ in envs:
         if slug_problem(slug) is None:
             hosts[host_label(slug, name)] = env_id
     by_env: dict[str, list[dict[str, Any]]] = {env_id: [] for env_id in environments}
