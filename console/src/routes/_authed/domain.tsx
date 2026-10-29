@@ -245,7 +245,22 @@ function observedText(observed: Delegation['observed_ns']): string[] {
   return [...seen].sort();
 }
 
+function SettingUp({ suffix }: { readonly suffix: string }) {
+  return (
+    <Panel title="Setting up the zone…">
+      <p>
+        We are making the zone for <code>{suffix}</code>. The NS records for your IT team appear here within a minute.
+      </p>
+    </Panel>
+  );
+}
+
 function Records({ delegation }: { readonly delegation: Delegation }) {
+  if (delegation.name_servers.length === 0) return <SettingUp suffix={delegation.suffix} />;
+  return <NameServers delegation={delegation} />;
+}
+
+function NameServers({ delegation }: { readonly delegation: Delegation }) {
   const { suffix, name_servers: nameServers } = delegation;
   const zone = parentZone(suffix);
   const provider = providerOf(delegation.provider);

@@ -125,6 +125,15 @@ describe('your own address', () => {
     expect(screen.getByText('ns1.old.example')).toBeTruthy();
   });
 
+  it('says the zone is being set up until it has name servers', async () => {
+    await domainPage(() => json(200, domain({ delegation: delegation('pending_dns', { name_servers: [] }) })));
+    expect(await screen.findByRole('heading', { name: 'Setting up the zone…' })).toBeTruthy();
+    expect(screen.getByText(SUFFIX)).toBeTruthy();
+    expect(screen.queryByRole('table', { name: 'NS records to add' })).toBeNull();
+    expect(screen.queryByLabelText('Ready to paste')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Copy/ })).toBeNull();
+  });
+
   it('says nothing is seen yet, with the generic steps', async () => {
     await domainPage(() => json(200, domain({ delegation: delegation('pending_dns', { provider: null }) })));
     expect(await screen.findByText('Nothing yet.')).toBeTruthy();

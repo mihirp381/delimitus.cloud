@@ -44,11 +44,13 @@ test('an admin delegates a subdomain, moves the apps to it and back', async ({ p
   await form.getByLabel('Subdomain to delegate').fill(suffix);
   await form.getByRole('button', { name: 'Create address' }).click();
 
-  await expect(page.getByRole('heading', { name: 'Waiting for your DNS change' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Setting up the zone…' })).toBeVisible();
+  await expect(page.getByLabel('Ready to paste')).toHaveCount(0);
   const records = page.getByRole('table', { name: 'NS records to add' });
   const values = records.getByRole('row').locator('td:nth-child(3) code');
   devStack('domains-tick');
   await page.reload();
+  await expect(page.getByRole('heading', { name: 'Waiting for your DNS change' })).toBeVisible();
   await expect(values.first()).toBeVisible();
   const nameServers = await values.allTextContents();
   expect(nameServers.length).toBeGreaterThan(0);
@@ -106,7 +108,7 @@ test('a failed certificate shows the reason and asks again', async ({ page, requ
   const form = page.getByRole('form', { name: 'Create your own address' });
   await form.getByLabel('Subdomain to delegate').fill(suffix);
   await form.getByRole('button', { name: 'Create address' }).click();
-  await expect(page.getByRole('heading', { name: 'Waiting for your DNS change' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Setting up the zone…' })).toBeVisible();
   const values = page.getByRole('table', { name: 'NS records to add' }).getByRole('row').locator('td:nth-child(3) code');
   devStack('domains-tick');
   await page.reload();
