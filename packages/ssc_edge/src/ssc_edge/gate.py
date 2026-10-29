@@ -17,7 +17,10 @@ Stages, in order, stopping at the first refusal:
    ``403``; a WebSocket upgrade whose ``Origin`` is not the app's own origin is ``403`` (compared
    as an origin: scheme and host in any case, ``:443`` written or not).
 4. Session: no valid session cookie for this host is a redirect to login, whether or not an app
-   lives at the host. The redirect sets a fresh login nonce cookie and sends its SHA-256.
+   lives at the host. The redirect sets a fresh login nonce cookie and sends its SHA-256. A
+   browser's request that is not a ``GET``/``HEAD`` (a form post whose session ended) gets
+   ``401`` and a page linking to that login instead, returning to the page it came from
+   (``Referer`` on this host, else ``/``), never to the post's target.
    A request carrying a schedule token (``SSC-Schedule-Token``, SSC-041) is a timer call
    instead: it needs no session and goes to :meth:`Gate._timer`, which never redirects to login
    and never marks the request for the "waking up" page, so the call waits for the app or fails
@@ -31,8 +34,7 @@ Stages, in order, stopping at the first refusal:
    environment's service with the time Cloud Run will end it (``X-SSC-Request-Deadline``). The
    browser's answer gets ``Content-Security-Policy: form-action 'self' <auth_url>
    <form_targets>; frame-ancestors 'self'`` (CD-5.2) beside any policy of the app's; the auth
-   origin is there because a browser applies ``form-action`` to a form's redirects, and a post
-   whose session ended is sent to ``<auth_url>/login``. A
+   origin is there for ``/.ssc/logout``, whose redirect ``form-action`` also covers. A
    browser page load without the wake cookie is marked for the "waking up" page
    (``ssc_edge.envoy``). A WebSocket, an event stream and every other request that is not a page
    or a static file (:func:`relayed`) is admitted to the stream relay (``ssc_edge.streams``),
@@ -112,6 +114,7 @@ type Reason = Literal[
     "bad_schedule_token",
     "app_inactive",
     "previous_suffix",
+    "session_ended",
 ]
 
 
@@ -271,6 +274,20 @@ def _local_path(raw: str | None) -> str:
     return raw
 
 
+def _referer_path(referer: str | None, host: str) -> str:
+    """The path and query of a ``Referer`` on ``host`` itself, else ``/``."""
+    try:
+        parts = urlsplit(referer or "")
+        port = parts.port
+    except ValueError:
+        return "/"
+    if parts.scheme != "https" or port not in (None, 443) or "@" in parts.netloc:
+        return "/"
+    if normal_host(parts.netloc) != host:
+        return "/"
+    return _local_path(parts.path + (f"?{parts.query}" if parts.query else ""))
+
+
 class Gate:
     def __init__(  # noqa: PLR0913  (keyword-only collaborators)
         self,
@@ -356,7 +373,7 @@ class Gate:
             return await self._timer(token, host, path, app, facts)
         session, presented = self._session(facts, host)
         if session is None:
-            return self._login(host, path, cleared=presented)
+            return self._login(host, path, facts, cleared=presented)
         if self._refresh is not None:
             await self._refresh()
         return self._decide(host, path, app, session, facts)
@@ -388,7 +405,18 @@ class Gate:
                 return session, True
         return None, bool(values)
 
-    def _login(self, host: str, path: str, *, cleared: bool, reason: Reason = "no_session") -> Deny:
+    def _login(  # noqa: PLR0913  (one request's parts)
+        self,
+        host: str,
+        path: str,
+        facts: Facts,
+        *,
+        cleared: bool,
+        reason: Reason = "no_session",
+    ) -> Deny:
+        posted = facts.method not in SAFE_METHODS and "sec-fetch-mode" in facts.headers
+        if posted:
+            path = _referer_path(facts.headers.get("referer"), host)
         nonce = self._nonce()
         query = urlencode(
             {
@@ -397,10 +425,13 @@ class Gate:
                 "binding": binding_of(nonce),
             }
         )
+        login = f"{self._cfg.auth_url}/login?{query}"
         extra = [("set-cookie", login_cookie(nonce))]
         if cleared:
             extra.append(("set-cookie", clear_cookie()))
-        return _redirect(f"{self._cfg.auth_url}/login?{query}", reason, *extra)
+        if posted:
+            return _page(401, pages.session_ended(login), "session_ended", *extra)
+        return _redirect(login, reason, *extra)
 
     async def _own(self, own: str, path: str, host: str, facts: Facts) -> Deny:
         if own == CALLBACK_PATH and facts.method in SAFE_METHODS:
@@ -464,7 +495,7 @@ class Gate:
             return _page(503, pages.UNAVAILABLE, "no_view")
         admitted = self._admit(view, host, app, session)
         if admitted == "revoked":
-            return self._login(host, path, cleared=True, reason="revoked")
+            return self._login(host, path, facts, cleared=True, reason="revoked")
         if isinstance(admitted, str):
             return not_found(admitted)
         env_id, env, role = admitted

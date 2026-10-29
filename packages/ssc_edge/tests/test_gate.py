@@ -1,6 +1,7 @@
 """The gateway's decision (SSC-018): every stage, and a forbidden app answered exactly like an
 address with no app."""
 
+import html
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -140,6 +141,61 @@ async def test_no_session_goes_to_login_whether_or_not_an_app_lives_there(world:
             "binding": [binding_of(NONCE)],
         }
         assert [v for k, v in out.headers if k == "set-cookie"] == [login_cookie(NONCE)]
+
+
+POSTED = {
+    "sec_fetch_site": "same-origin",
+    "sec_fetch_mode": "navigate",
+    "sec_fetch_dest": "document",
+}
+
+
+def sign_in_link(out: Deny) -> str:
+    body = out.body.decode()
+    href = body.split('<a href="', 1)[1].split('"', 1)[0]
+    return html.unescape(href)
+
+
+@pytest.mark.parametrize(
+    ("referer", "back"),
+    [
+        (f"https://{HOST}/books/new?year=2026", "/books/new?year=2026"),
+        (f"https://{HOST.upper()}:443/books", "/books"),
+        (f"https://{PAY_HOST}/books", "/"),
+        (f"http://{HOST}/books", "/"),
+        (None, "/"),
+    ],
+)
+async def test_a_form_posted_after_the_session_ended_gets_a_sign_in_page(
+    world: World, referer: str | None, back: str
+) -> None:
+    extra = {"referer": referer} if referer else {}
+    out = await denied(world, facts(path="/books/save", method="POST", **POSTED, **extra))
+    assert (out.status, out.reason) == (401, "session_ended")
+    assert ("cache-control", "no-store") in out.headers
+    assert "location" not in dict(out.headers)
+    assert b"Your session ended" in out.body and b"<script" not in out.body
+    link = sign_in_link(out)
+    assert link.startswith("https://auth.example.test/login?")
+    assert parse_qs(urlsplit(link).query) == {
+        "org": [ORG],
+        "return_to": [f"https://{HOST}{back}"],
+        "binding": [binding_of(NONCE)],
+    }
+    assert [v for k, v in out.headers if k == "set-cookie"] == [login_cookie(NONCE)]
+
+
+async def test_an_expired_session_s_post_is_cleared_and_gets_the_page(world: World) -> None:
+    expired = world.cookie(session(iat=NOW - 7200, life=3600))
+    out = await denied(world, facts(method="PUT", cookie=expired, **POSTED))
+    assert (out.status, out.reason) == (401, "session_ended")
+    assert [v for k, v in out.headers if k == "set-cookie"] == [login_cookie(NONCE), clear_cookie()]
+
+
+async def test_a_post_without_fetch_metadata_or_a_get_still_goes_to_login(world: World) -> None:
+    for f in (facts(method="POST"), facts(**POSTED), facts(method="HEAD", **POSTED)):
+        out = await denied(world, f)
+        assert (out.status, out.reason) == (302, "no_session")
 
 
 @pytest.mark.parametrize(
