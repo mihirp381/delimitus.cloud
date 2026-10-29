@@ -32,7 +32,8 @@ _ADMINS = text(
 _OWNED = text(
     "select a.id, u.deactivated_at from ssc.app a join ssc.user_account u "
     "on u.org_id = a.org_id and u.id = a.owner_user_id where a.org_id = :org "
-    "and a.owner_user_id = :owner and a.status <> 'deleted' and u.status <> 'active' order by a.id"
+    "and a.owner_user_id = :owner and a.status not in ('deleting', 'deleted') "
+    "and u.status <> 'active' order by a.id"
 )
 _INSERT = text(
     "insert into ssc.notification_outbox "

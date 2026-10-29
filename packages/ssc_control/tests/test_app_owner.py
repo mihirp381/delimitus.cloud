@@ -489,3 +489,20 @@ def test_a_transfer_waits_for_a_deactivation_of_the_new_owner(
         leaving.commit()
         assert_problem(moved.result(timeout=10), ErrorCode.OWNER_NOT_ACTIVE)
     assert app_of(client, world.admin_token, world.app)["owner_user_id"] == world.admin
+
+
+def test_no_mail_is_sent_about_an_app_being_deleted(
+    client: TestClient, world: World, dsns: Dsns, signing_key: SigningKey
+) -> None:
+    bo, bo_subject = member(client, world, "Bo")
+    token = user_token(signing_key, world.org, bo)
+    atlas = on(world, create_app_as(client, token, "atlas"))
+    books = on(world, create_app_as(client, token, "books"))
+    deleting = "update ssc.app set status = 'deleting' where id = %s"
+    sql(dsns.app, world.org, deleting, (atlas.app,))
+    set_status(client, world, bo_subject, "Bo", "deactivated")
+    assert {m["app_id"] for m in ownerless_mail(dsns.app, world.org)} == {books.app}
+
+    sql(dsns.app, world.org, deleting, (books.app,))
+    assert flush(dsns.app, world.org).sent == type(LogMailer().sent)()
+    assert ownerless_mail(dsns.app, world.org) == []

@@ -5,7 +5,7 @@ reads the recipient's address only now, sends, and marks the row. A failure back
 and 16 minutes and the fifth marks the row ``failed``; it never touches the approval. A row
 whose request was decided meanwhile, or whose recipient left, is deleted unsent, as is a
 domain or ownerless-app mail whose recipient is no longer an admin, and an ownerless-app mail
-whose app has an active owner again or is deleted. Logs name the
+whose app has an active owner again or is being deleted. Logs name the
 row and the error type, never an address, a message or the server's reply.
 """
 
@@ -42,7 +42,7 @@ _RECIPIENT = text(
 )
 _OWNERLESS_APP = text(
     "select a.slug from ssc.app a where a.org_id = :org and a.id = :id "
-    "and a.status <> 'deleted' and not exists (select 1 from ssc.user_account u "
+    "and a.status not in ('deleting', 'deleted') and not exists (select 1 from ssc.user_account u "
     "where u.org_id = a.org_id and u.id = a.owner_user_id and u.status = 'active')"
 )
 _SENT = text(
