@@ -53,7 +53,7 @@ Every refusal has one body, and the first check that refuses answers:
 {"error": {"code": "CONNECTION_SUSPENDED", "stage": "admission", "message": "...", "fix_owner": "admin"}, "request_id": "..."}
 ```
 
-`sqlstate` is added for `QUERY_FAILED` when the database gave one. `reason` is added for `QUERY_REFUSED`, one of four values: `other_database` (the statement names another database, project, server or sheet than the connection's), `not_read_only` (not a read: a write, `NOTIFY`, `SET`, a sequence advance, a refused function), `multiple_statements` (more than one statement), `unsupported_statement` (anything else the classifier refuses: text it cannot parse, a refused string form, a refused view, a query the connector's grammar does not take, parameters a connector does not take). The classifier's own text, quoted in the connector sections below, goes to the log only. `message` is fixed per code; nothing from the statement, its parameters or the database's own message is returned.
+`sqlstate` is added for `QUERY_FAILED` when the database gave one. `reason` is added for `QUERY_REFUSED`, one of four values: `other_database` (the statement names another database, project, server or sheet than the connection's), `not_read_only` (not a read: a write, `NOTIFY`, `SET`, a sequence advance, a refused function), `multiple_statements` (more than one statement), `unsupported_statement` (anything else the classifier refuses: text it cannot parse, a refused string form, a refused view, a query the connector's grammar does not take, parameters a connector does not take). The classifier's own text, quoted in the connector sections below, goes to the log only. `message` is fixed per code (`APP_NOT_ACTIVE` has a second, for `owner_needed`); nothing from the statement, its parameters or the database's own message is returned.
 
 | Code | Status | Stage | Fix owner | When |
 |---|---|---|---|---|
@@ -62,7 +62,7 @@ Every refusal has one body, and the first check that refuses answers:
 | `UNAVAILABLE` | 503 | workload | platform | Google's keys could not be fetched and none are cached; also any unexpected failure (stage `execute`). |
 | `DATA_SNAPSHOT_STALE` | 503 | admission | platform | No snapshot read confirmed in the last 120 s. |
 | `UNKNOWN_ENVIRONMENT` | 403 | admission | platform | The caller's environment is not in the snapshot. |
-| `APP_NOT_ACTIVE` | 403 | admission | admin | The app is `disabled` or `quarantined` (the kill switch). |
+| `APP_NOT_ACTIVE` | 403 | admission | admin | The app is `disabled` or `quarantined` (the kill switch), or `owner_needed` (no active owner and no active admin to assign one, amendment 2026-10-29), whose `message` is its own: "This app needs a named owner; ask your admin to assign one." |
 | `IDENTITY_REFUSED` | 401 | user | app | The forwarded note does not verify for the caller's environment, or its user is not active. |
 | `CONNECTION_NOT_GRANTED` | 403 | admission | admin | No such connection, or not granted to the caller's environment: the two look the same. |
 | `CONNECTION_SUSPENDED` | 403 | admission | admin | The connection is suspended. |

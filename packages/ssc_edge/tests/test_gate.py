@@ -724,3 +724,47 @@ async def test_a_refused_page_load_is_never_marked(world: World) -> None:
     )
     assert forbidden.status == 404 and same_answer(forbidden, nowhere)
     assert all(name != "set-cookie" for name, _ in forbidden.headers)
+
+
+def needing_an_owner(*, status: str = "owner_needed") -> AccessView:
+    envs = snapshot()["environments"]
+    changed = {k: {**e, "status": status} if e["app_id"] == LEDGER else e for k, e in envs.items()}
+    return AccessView.from_document(snapshot(environments=changed))
+
+
+async def test_an_app_that_needs_an_owner_answers_403_on_prod_and_preview(world: World) -> None:
+    world.view = needing_an_owner()
+    for host in (HOST, PREVIEW_HOST):
+        out = await denied(world, facts(host, cookie=world.cookie(session(), host)))
+        assert (out.status, out.reason, out.body) == (403, "owner_needed", pages.OWNER_NEEDED)
+        assert out.headers == pages.HEADERS
+    assert b"<title>This app needs a named owner</title>" in pages.OWNER_NEEDED
+    assert b"Ask your organisation's admin to assign an owner." in pages.OWNER_NEEDED
+    paid = await check(world, facts(PAY_HOST, cookie=world.cookie(session(), PAY_HOST)))
+    assert isinstance(paid, Allow)
+
+
+async def test_an_app_that_needs_an_owner_is_not_found_by_those_its_grants_refuse(
+    world: World,
+) -> None:
+    world.view = needing_an_owner()
+    nowhere = await denied(world, facts(NOWHERE_HOST, cookie=world.cookie(host=NOWHERE_HOST)))
+    ben = await denied(world, facts(PREVIEW_HOST, cookie=world.cookie(session(BEN), PREVIEW_HOST)))
+    assert same_answer(ben, nowhere)
+    assert ben.status == 404
+
+
+async def test_a_disabled_app_stays_disabled_whatever_its_owner(world: World) -> None:
+    world.view = needing_an_owner(status="disabled")
+    for host in (HOST, PREVIEW_HOST):
+        out = await denied(world, facts(host, cookie=world.cookie(session(), host)))
+        assert (out.status, out.body) == (404, pages.NOT_FOUND)
+
+
+async def test_an_open_stream_to_an_app_that_now_needs_an_owner_is_closed(world: World) -> None:
+    gate = world.gate()
+    allowed = await gate.check(facts(HOST, cookie=world.cookie()))
+    assert isinstance(allowed, Allow)
+    assert gate.holds(allowed)
+    world.view = needing_an_owner()
+    assert not gate.holds(allowed)

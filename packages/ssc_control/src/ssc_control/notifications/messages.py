@@ -129,6 +129,12 @@ def domain_link(console_url: str) -> str:
     return f"{console_url.rstrip('/')}/domain"
 
 
+def app_ownerless(slug: str, app_id: str, console_url: str) -> tuple[str, str]:
+    """The mail to an org's admins when an app's owner is no longer active."""
+    body = f"{slug} has no owner. Assign one: {console_url.rstrip('/')}/apps/{app_id}"
+    return f"{slug} has no owner", body
+
+
 def domain_active(suffix: str, console_url: str) -> tuple[str, str]:
     """The mail to an org's admins when its own address is ready."""
     body = (

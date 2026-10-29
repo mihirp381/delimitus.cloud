@@ -19,6 +19,7 @@ export const EXPENSES = {
   app_id: APP_ID,
   slug: 'expenses',
   status: 'active',
+  owner_state: 'active',
   owner_name: 'Olive Owner',
   owner_email: 'olive@example.com',
   environments: [env('prod', 'user', [{ kind: 'org', name: null }])],
@@ -27,6 +28,7 @@ export const LEDGER_APP = {
   app_id: LEDGER,
   slug: 'ledger',
   status: 'active',
+  owner_state: 'active',
   owner_name: 'Olive Owner',
   owner_email: 'olive@example.com',
   environments: [

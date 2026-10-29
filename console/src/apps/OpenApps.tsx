@@ -11,9 +11,11 @@ import { type Column, Table } from '../components/Table';
 export const DIRECT = 'Shared with you';
 
 function Slug({ app }: { readonly app: UserApp }) {
+  const blocked = app.owner_state === 'blocked';
+  const state = blocked ? 'needs an owner' : app.status;
   return (
     <span className="app-name">
-      <span className={`dot dot-${STATUS_TONE[app.status] ?? 'warning'}`} role="img" aria-label={app.status} title={app.status} />
+      <span className={`dot dot-${blocked ? 'danger' : (STATUS_TONE[app.status] ?? 'warning')}`} role="img" aria-label={state} title={state} />
       {isBuilder(app) ? (
         <Link to="/apps/$appId" params={{ appId: app.app_id }}>
           {app.slug}
@@ -34,7 +36,9 @@ function Access({ app }: { readonly app: UserApp }) {
   );
 }
 
+/** A blocked app is turned off until an org admin assigns it an owner, so it offers no way in. */
 function Open({ app }: { readonly app: UserApp }) {
+  if (app.owner_state === 'blocked') return <Badge tone="danger">Needs an owner</Badge>;
   return (
     <span className="open-buttons">
       {app.environments.map((e) =>

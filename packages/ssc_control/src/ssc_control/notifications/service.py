@@ -29,9 +29,16 @@ _ADMINS = text(
     "select id from ssc.user_account where org_id = :org and status = 'active' "
     "and role = 'admin' order by id"
 )
+_OWNED = text(
+    "select a.id, u.deactivated_at from ssc.app a join ssc.user_account u "
+    "on u.org_id = a.org_id and u.id = a.owner_user_id where a.org_id = :org "
+    "and a.owner_user_id = :owner and a.status not in ('deleting', 'deleted') "
+    "and u.status <> 'active' order by a.id"
+)
 _INSERT = text(
-    "insert into ssc.notification_outbox (id, org_id, user_id, kind, approval_id, dedupe_key) "
-    "values (:id, :org, :user, :kind, :approval, :key) "
+    "insert into ssc.notification_outbox "
+    "(id, org_id, user_id, kind, approval_id, app_id, dedupe_key) "
+    "values (:id, :org, :user, :kind, :approval, :app, :key) "
     "on conflict (org_id, dedupe_key) do nothing returning id"
 )
 
@@ -55,6 +62,7 @@ async def queue(  # noqa: PLR0913  (keyword-only)
     approval_id: str | None,
     recipients: Sequence[str],
     key: str,
+    app_id: str | None = None,
 ) -> int:
     """One row per recipient (``key:user``), then one send job for the org. How many rows were
     new."""
@@ -68,6 +76,7 @@ async def queue(  # noqa: PLR0913  (keyword-only)
                 "user": user,
                 "kind": kind,
                 "approval": approval_id,
+                "app": app_id,
                 "key": f"{key}:{user}",
             },
         )
@@ -125,3 +134,24 @@ async def domain_changed(
         recipients=admins,
         key=f"{kind}:{domain_id}:{at.isoformat()}",
     )
+
+
+async def owner_left(conn: AsyncConnection, *, org_id: str, owner_id: str) -> int:
+    """Tell every active admin that each app ``owner_id`` owns has no owner now: once per app
+    and per deactivation."""
+    apps = (await conn.execute(_OWNED, {"org": org_id, "owner": owner_id})).all()
+    if not apps:
+        return 0
+    admins = list((await conn.execute(_ADMINS, {"org": org_id})).scalars())
+    queued = 0
+    for app_id, left_at in apps:
+        queued += await queue(
+            conn,
+            org_id=org_id,
+            kind="app_ownerless",
+            approval_id=None,
+            recipients=admins,
+            key=f"app_ownerless:{app_id}:{left_at.isoformat()}",
+            app_id=app_id,
+        )
+    return queued

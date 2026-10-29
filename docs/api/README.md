@@ -74,6 +74,14 @@ preview, as does a transfer to a new owner without one (2026-10-20); prod starts
 owner's grants can be removed like any other; the owner keeps the right to change sharing. `GET .../access?user_id=`
 explains one user's access with the same evaluator the gateway uses.
 
+**Every app has a named owner** (decision 019, amendment 2026-10-29; not live yet). `owner_state`
+on `GET /v1/apps/{app_id}`, `GET /v1/inventory` and `GET /v1/me/apps` is `active`, `ownerless`
+(the owner is not active; the app still opens while the org has an active admin) or `blocked`
+(ownerless with no active admin: the gateway answers `403` with the owner-needed page, preview and
+production alike, and the data gateway refuses the app). An admin fixes it with `PUT
+/v1/apps/{app_id}/owner`, naming an active person; agent sessions, CI tokens and members are
+refused as before. Each active admin gets one mail when an app becomes ownerless.
+
 **The server says who the caller is** (decision 019). `GET /v1/whoami` returns `role`: `admin` or
 `member` for an active user of the org, `null` for any other credential or a deactivated user.
 Admin-only endpoints need `admin`, read on every request. `GET /v1/users?email=` (active admins

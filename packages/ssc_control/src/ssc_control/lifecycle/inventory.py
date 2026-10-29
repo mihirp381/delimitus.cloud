@@ -11,11 +11,13 @@ from typing import Any, Final
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from ssc_control.owners import OWNER_STATE
+
 MAX_PAGE: Final = 100
 
 _PAGE = text(
-    """
-select a.id as app_id, a.slug, a.status, a.created_at,
+    f"""
+select a.id as app_id, a.slug, a.status, a.created_at, {OWNER_STATE} as owner_state,
        jsonb_build_object('user_id', u.id, 'display_name', u.display_name, 'email', u.email,
                           'status', u.status) as owner,
        used.last_used_at, envs.environments
@@ -56,7 +58,7 @@ where a.org_id = :org and a.status <> 'deleted'
   and (cast(:cursor as text) is null or a.slug > cast(:cursor as text))
 order by a.slug
 limit :limit
-"""
+"""  # noqa: S608  (a constant SQL fragment)
 )
 
 

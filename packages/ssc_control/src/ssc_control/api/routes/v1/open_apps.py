@@ -1,7 +1,8 @@
 """``GET /v1/me/apps`` and ``GET /v1/users/{user_id}/apps``: every environment a person may open.
 
 The second consumer of the one evaluator (decision 019): one live compile of the org, then
-``ssc_shared.access.decide`` for every environment; only the allowed pairs are listed.
+``ssc_shared.access.decide`` for every environment; only the allowed pairs are listed, and the
+pairs refused only because the app needs an owner (``owner_state`` ``blocked``).
 """
 
 from datetime import UTC, datetime
@@ -23,8 +24,9 @@ from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW
 from ssc_control.db.orgs import suffix_of
 from ssc_control.names import REMOVED_GROUP, groups, people
+from ssc_control.owners import OWNER_STATE, OwnerState
 from ssc_control.snapshot.compiler import compile_document
-from ssc_shared.access import AccessView, GrantRef, decide
+from ssc_shared.access import RANK, AccessView, GrantRef, decide
 
 router = APIRouter()
 
@@ -54,6 +56,10 @@ class UserApp(Strict):
     status: Literal["active", "disabled", "quarantined", "deleting"]
     owner_name: str
     owner_email: str | None
+    owner_state: OwnerState = Field(
+        description="As `AppOut.owner_state`. A `blocked` app is listed with the environments "
+        "the person would open, but the gateway refuses them until an owner is assigned."
+    )
     environments: list[UserAppEnvironment] = Field(description="Production before preview.")
 
 
@@ -73,7 +79,8 @@ RESPONSES: Final = problem_responses(
 
 _STATUS = text("select status from ssc.user_account where org_id = :org and id = :id")
 _APPS = text(
-    "select a.id, a.slug, a.status, a.owner_user_id, o.cell_label, o.apps_suffix from ssc.app a "
+    f"select a.id, a.slug, a.status, a.owner_user_id, {OWNER_STATE} as owner_state, "  # noqa: S608  (a constant SQL fragment)
+    "o.cell_label, o.apps_suffix from ssc.app a "
     "join ssc.org o on o.id = a.org_id "
     "where a.org_id = :org and a.status <> 'deleted' order by a.slug collate \"C\""
 )
@@ -98,8 +105,11 @@ async def user_apps(uow: UnitOfWork, user_id: str, apps_domain: str) -> UserApps
     by_app: dict[str, list[tuple[str, EnvironmentName, GrantRole, list[GrantRef]]]] = {}
     for env_id, env in doc.environments.items():
         decision = decide(view, env_id, user_id)
-        if decision.allowed and decision.role is not None:
-            found = (env_id, env.name, decision.role, _subjects(decision.via))
+        role = decision.role
+        if decision.reason == "owner_needed":
+            role = max(decision.via, key=lambda g: RANK[g.role]).role
+        if (decision.allowed or decision.reason == "owner_needed") and role is not None:
+            found = (env_id, env.name, role, _subjects(decision.via))
             by_app.setdefault(env.app_id, []).append(found)
     rows = (await uow.conn.execute(_APPS, {"org": uow.org_id})).mappings().all()
     rows = [r for r in rows if r["id"] in by_app]
@@ -132,6 +142,7 @@ async def user_apps(uow: UnitOfWork, user_id: str, apps_domain: str) -> UserApps
                 status=r["status"],
                 owner_name=users.of(r["owner_user_id"]).name,
                 owner_email=users.of(r["owner_user_id"]).email,
+                owner_state=r["owner_state"],
                 environments=[
                     UserAppEnvironment(
                         environment_id=env_id,

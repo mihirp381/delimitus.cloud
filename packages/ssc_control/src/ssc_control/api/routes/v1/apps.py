@@ -20,6 +20,7 @@ from ssc_control.api.runtime import runtime_of
 from ssc_control.api.uow import UnitOfWork, UserUoW
 from ssc_control.db.orgs import suffix_of
 from ssc_control.names import people
+from ssc_control.owners import OwnerState, owner_state
 from ssc_control.snapshot.service import mark_dirty
 from ssc_shared.hosts import Environment, app_origin, slug_problem
 
@@ -54,6 +55,11 @@ class AppOut(Strict):
     owner_name: str
     owner_email: str | None
     status: Literal["active", "disabled", "quarantined", "deleting"]
+    owner_state: OwnerState = Field(
+        description="`active`: the owner is active. `ownerless`: the owner is not, and an "
+        "active admin can assign one (`PUT /v1/apps/{app_id}/owner`); the app still serves. "
+        "`blocked`: no active admin either, so the gateway and the data gateway refuse it."
+    )
     created_at: datetime
     environments: list[EnvironmentOut]
 
@@ -130,6 +136,7 @@ async def app_out(uow: UnitOfWork, row: RowMapping, apps_domain: str) -> AppOut:
         **dict(row),
         owner_name=owner.name,
         owner_email=owner.email,
+        owner_state=await owner_state(uow.conn, uow.org_id, row["id"]),
         environments=await environments_of(uow, row["id"], apps_domain),
     )
 

@@ -53,7 +53,9 @@ from ssc_datagw.connectors import (
 )
 from ssc_datagw.limits import DEFAULT_MAX_ROWS, PLATFORM, Slots
 from ssc_datagw.server import (
+    ERRORS,
     MAX_BODY,
+    OWNER_NEEDED_MESSAGE,
     SCHEMA_SECONDS,
     DataGateway,
     create_app,
@@ -70,7 +72,12 @@ KILLS = {
     "a suspended connection": ({"sales": "suspended"}, "CONNECTION_SUSPENDED"),
     "a disabled app": ({"status": "disabled"}, "APP_NOT_ACTIVE"),
     "a quarantined app": ({"status": "quarantined"}, "APP_NOT_ACTIVE"),
+    "an app that needs an owner": ({"status": "owner_needed"}, "APP_NOT_ACTIVE"),
 }
+
+
+def kill_message(case: str, code: str) -> str:
+    return OWNER_NEEDED_MESSAGE if case == "an app that needs an owner" else ERRORS[code].message
 
 
 class Clock:
@@ -320,6 +327,7 @@ async def test_done_when_a_service_at_zero_when_the_kill_fired_refuses_its_first
         r = await http.post("/v1/connections/sales/query", json={"sql": SQL}, headers=bearer())
     assert time.monotonic() - started < 5
     assert (r.status_code, error(r)["code"]) == (403, code)
+    assert error(r)["message"] == kill_message(case, code)
     assert connector.queries == []
     (record,) = records(caplog)
     assert (record["snapshot_version"], record["outcome"], record["cold"]) == (2, code, True)
@@ -340,6 +348,7 @@ async def test_the_kill_watch_ends_a_running_query(tmp_path: Path, case: str) ->
         r = await asyncio.wait_for(asking, 2)
     assert r.status_code == 403
     assert (error(r)["code"], error(r)["stage"]) == (code, "execute")
+    assert error(r)["message"] == kill_message(case, code)
     assert (connector.cancelled, connector.running, connector.closed) == (1, 0, 1)
 
 

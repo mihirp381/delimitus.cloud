@@ -97,6 +97,7 @@ const LISTS: readonly [string, string, string | RegExp, Record<string, Handler>]
               app_id: APP_ID,
               slug: 'expenses',
               status: 'active',
+              owner_state: 'active',
               owner_name: OLIVE.name,
               owner_email: OLIVE.email,
               environments: [
@@ -128,6 +129,7 @@ const LISTS: readonly [string, string, string | RegExp, Record<string, Handler>]
               slug: 'expenses',
               status: 'active',
               created_at: '2026-09-28T10:00:00Z',
+              owner_state: 'active',
               owner: { user_id: OWNER, display_name: OLIVE.name, ...OLIVE },
               last_used_at: null,
               environments: [],

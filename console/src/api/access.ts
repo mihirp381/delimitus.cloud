@@ -30,6 +30,8 @@ const SENTENCE: Readonly<Record<AccessReason, (r: AccessExplained, who: string, 
   no_grant: (_r, who, where) =>
     `${who} cannot open ${where}: no grant names them, a group of theirs or everyone in the organisation.`,
   app_not_active: (_r, who, where) => `${who} cannot open ${where}: the app is stopped, so no one can.`,
+  owner_needed: (_r, who, where) =>
+    `${who} cannot open ${where}: the app has no active owner and the org no active admin, so no one can.`,
   user_not_active: (_r, who, where) => `${who} cannot open ${where}: they are deactivated.`,
   unknown_environment: (_r, who, where) =>
     `${who} cannot open ${where}: the sharing rules do not know this environment yet.`,

@@ -29,7 +29,8 @@ Stages, in order, stopping at the first refusal:
 6. Revocation: a session issued before the person's ``sessions_not_before`` (deactivation,
    SSC-019) is a redirect to login with the cookie cleared.
 7. Environment and sharing rule (``ssc_shared.access.decide``): an unknown host label and any
-   refusal are the same ``404`` page.
+   refusal are the same ``404`` page, except ``owner_needed`` (an app with no active owner and
+   no active admin), which is ``403`` and says so to the people the grants admit.
 8. Allowed: the identity note is minted for the environment id, and the request goes to the
    environment's service with the time Cloud Run will end it (``X-SSC-Request-Deadline``). The
    browser's answer gets ``Content-Security-Policy: form-action 'self' <auth_url>
@@ -109,6 +110,7 @@ type Reason = Literal[
     "no_view",
     "unknown_host_label",
     "not_granted",
+    "owner_needed",
     "signed_in",
     "signed_out",
     "bad_schedule_token",
@@ -473,6 +475,8 @@ class Gate:
             return "unknown_host_label"
         decision = decide(view, env_id, session.sub)
         env = view.environments.get(env_id)
+        if decision.reason == "owner_needed" and env is not None:
+            return "owner_needed" if env.name == app.environment else "unknown_host_label"
         if not decision.allowed or decision.role is None or env is None:
             return "not_granted"
         if env.name != app.environment:
@@ -497,6 +501,8 @@ class Gate:
         admitted = self._admit(view, host, app, session)
         if admitted == "revoked":
             return self._login(host, path, facts, cleared=True, reason="revoked")
+        if admitted == "owner_needed":
+            return _page(403, pages.OWNER_NEEDED, "owner_needed")
         if isinstance(admitted, str):
             return not_found(admitted)
         env_id, env, role = admitted

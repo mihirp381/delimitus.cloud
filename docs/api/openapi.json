@@ -54,6 +54,7 @@
               "user_not_active",
               "no_grant",
               "below_floor",
+              "owner_needed",
               "granted"
             ],
             "title": "Reason",
@@ -525,6 +526,16 @@
             "title": "Owner Name",
             "type": "string"
           },
+          "owner_state": {
+            "description": "`active`: the owner is active. `ownerless`: the owner is not, and an active admin can assign one (`PUT /v1/apps/{app_id}/owner`); the app still serves. `blocked`: no active admin either, so the gateway and the data gateway refuse it.",
+            "enum": [
+              "active",
+              "ownerless",
+              "blocked"
+            ],
+            "title": "Owner State",
+            "type": "string"
+          },
           "owner_user_id": {
             "title": "Owner User Id",
             "type": "string"
@@ -551,6 +562,7 @@
           "owner_name",
           "owner_email",
           "status",
+          "owner_state",
           "created_at",
           "environments"
         ],
@@ -4968,6 +4980,16 @@
           "owner": {
             "$ref": "#/components/schemas/Owner"
           },
+          "owner_state": {
+            "description": "`active`: the owner is active. `ownerless`: the owner is not, and an active admin can assign one (`PUT /v1/apps/{app_id}/owner`); the app still serves. `blocked`: no active admin either, so the gateway and the data gateway refuse it.",
+            "enum": [
+              "active",
+              "ownerless",
+              "blocked"
+            ],
+            "title": "Owner State",
+            "type": "string"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
@@ -4988,6 +5010,7 @@
           "slug",
           "status",
           "owner",
+          "owner_state",
           "created_at",
           "last_used_at",
           "environments"
@@ -7284,6 +7307,16 @@
             "title": "Owner Name",
             "type": "string"
           },
+          "owner_state": {
+            "description": "As `AppOut.owner_state`. A `blocked` app is listed with the environments the person would open, but the gateway refuses them until an owner is assigned.",
+            "enum": [
+              "active",
+              "ownerless",
+              "blocked"
+            ],
+            "title": "Owner State",
+            "type": "string"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
@@ -7305,6 +7338,7 @@
           "status",
           "owner_name",
           "owner_email",
+          "owner_state",
           "environments"
         ],
         "title": "UserApp",
@@ -14737,7 +14771,7 @@
     },
     "/v1/apps/{app_id}/owner": {
       "put": {
-        "description": "Give the app to another member. ``REFERENCE_NOT_FOUND`` for a user not in the org,\n``OWNER_NOT_ACTIVE`` for a deactivated one.",
+        "description": "Give the app to another member. This is also how an app with no active owner\n(`owner_state` `ownerless`) gets one. ``REFERENCE_NOT_FOUND`` for a user not in the org,\n``OWNER_NOT_ACTIVE`` for one who is not active. Org admins with their own credential only.",
         "operationId": "transfer_owner_v1_apps__app_id__owner_put",
         "parameters": [
           {

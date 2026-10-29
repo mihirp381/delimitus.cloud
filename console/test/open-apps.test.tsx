@@ -45,6 +45,18 @@ describe('your apps (a member)', () => {
     expect(screen.queryByRole('group', { name: 'Show' })).toBeNull();
   });
 
+  it('marks an app that needs an owner and offers no way in', async () => {
+    await yourApps([{ ...LEDGER_APP, owner_state: 'blocked' }, EXPENSES]);
+    const table = await screen.findByRole('table', { name: 'Apps you can open' });
+    const [ledger, expenses] = rows(table) as [HTMLElement, HTMLElement];
+    expect(within(ledger).getByText('Needs an owner').classList.contains('badge-danger')).toBe(true);
+    const dot = within(ledger).getByRole('img', { name: 'needs an owner' });
+    expect(dot.classList.contains('dot-danger')).toBe(true);
+    expect(within(expenses).getByRole('img', { name: 'active' }).classList.contains('dot-success')).toBe(true);
+    expect(within(ledger).queryAllByRole('link', { name: /^Open / })).toHaveLength(0);
+    expect(within(expenses).getAllByRole('link', { name: /^Open / })).toHaveLength(1);
+  });
+
   it('filters by slug or access, counts, says why it is empty and explains the page', async () => {
     await yourApps([EXPENSES, LEDGER_APP]);
     await screen.findByRole('table', { name: 'Apps you can open' });
@@ -77,6 +89,7 @@ const INVENTORY_ITEM = {
   slug: 'expenses',
   status: 'active',
   created_at: '2026-09-28T10:00:00Z',
+  owner_state: 'active',
   owner: { user_id: OWNER, display_name: 'Olive Owner', name: 'Olive Owner', email: 'olive@example.com' },
   last_used_at: null,
   environments: [

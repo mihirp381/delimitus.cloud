@@ -237,6 +237,8 @@ Pass: the execution succeeds (exit code 0). The job prints no revision; a failed
 
 A release that changes what the gateway signs goes in this order. The 2026-10-28 identity note amendment (`aud` is the environment id) is one: publish the 0.0.6 packages (`release-cli.yml`); in every app still on helpers 0.0.5, change `audience` to `SSC_APP_ENV_ID` and rebuild on `ssc-app` / `@delimitus/ssc-identity` 0.0.6; then roll the gateway. The helpers never read the environment, so a rebuild without the `audience` change still passes the origin, and such an app refuses every note the new gateway signs (`wrong_audience`).
 
+The named-owner amendment (2026-10-29) is another: the gateway, data gateway and egress images roll on every cell before the control plane that can publish `owner_needed` (an app with no active owner in an org with no active admin). Reversed, an old reader refuses that org's document (`status` is a closed set) and keeps its last view up to its limit, 300 s for the gateway and the egress proxy and 120 s for the data gateway; then the whole org answers 503 at the gateway and `DATA_SNAPSHOT_STALE` at the data gateway, and the egress proxy refuses every tunnel, until the readers roll.
+
 ## 9. Full apply: the release runs **[real]**
 
 ```sh

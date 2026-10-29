@@ -42,6 +42,7 @@ from ssc_control.lifecycle.kill_switch import (
     StepState,
 )
 from ssc_control.names import person
+from ssc_control.owners import OwnerState
 from ssc_control.snapshot.service import mark_dirty
 
 router = APIRouter()
@@ -88,6 +89,11 @@ class InventoryApp(Strict):
     slug: str
     status: AppStatus
     owner: Owner
+    owner_state: OwnerState = Field(
+        description="`active`: the owner is active. `ownerless`: the owner is not, and an "
+        "active admin can assign one (`PUT /v1/apps/{app_id}/owner`); the app still serves. "
+        "`blocked`: no active admin either, so the gateway and the data gateway refuse it."
+    )
     created_at: datetime
     last_used_at: datetime | None = Field(
         description="The last time anyone opened the app; null until the gateway reports it."
@@ -186,7 +192,9 @@ _SELECT_APP = text(
 _LOCK_APP_OWNER = text(
     "select owner_user_id from ssc.app where org_id = :org and id = :id for no key update"
 )
-_SELECT_USER_STATUS = text("select status from ssc.user_account where org_id = :org and id = :id")
+_LOCK_USER_STATUS = text(
+    "select status from ssc.user_account where org_id = :org and id = :id for share"
+)
 _SET_OWNER = text("update ssc.app set owner_user_id = :owner where org_id = :org and id = :id")
 _STATUS_ACTION = {
     "disabled": AuditAction.APP_DISABLED,
@@ -455,8 +463,9 @@ async def get_app_delete_run(app_id: Id, run_id: Id, uow: UserUoW) -> AppDeleteR
     ),
 )
 async def transfer_owner(app_id: Id, body: OwnerTransfer, request: Request, uow: UserUoW) -> AppOut:
-    """Give the app to another member. ``REFERENCE_NOT_FOUND`` for a user not in the org,
-    ``OWNER_NOT_ACTIVE`` for a deactivated one."""
+    """Give the app to another member. This is also how an app with no active owner
+    (`owner_state` `ownerless`) gets one. ``REFERENCE_NOT_FOUND`` for a user not in the org,
+    ``OWNER_NOT_ACTIVE`` for one who is not active. Org admins with their own credential only."""
     if uow.principal.is_agent:
         raise Refusal(ErrorCode.AGENT_SESSION_REFUSED)
     await require_admin(uow)
@@ -467,7 +476,7 @@ async def transfer_owner(app_id: Id, body: OwnerTransfer, request: Request, uow:
     if before is None:
         raise Refusal(ErrorCode.NOT_FOUND, evidence={"app_id": app_id})
     status = (
-        await uow.conn.execute(_SELECT_USER_STATUS, {"org": uow.org_id, "id": body.user_id})
+        await uow.conn.execute(_LOCK_USER_STATUS, {"org": uow.org_id, "id": body.user_id})
     ).scalar_one_or_none()
     if status is None:
         raise Refusal(ErrorCode.REFERENCE_NOT_FOUND, evidence={"user_id": body.user_id})
@@ -482,6 +491,6 @@ async def transfer_owner(app_id: Id, body: OwnerTransfer, request: Request, uow:
             before={"owner_user_id": before},
             after={"owner_user_id": body.user_id},
         )
-        if await grant_owner_preview(uow, app_id, body.user_id):
-            await mark_dirty(uow.conn, uow.org_id)
+        await grant_owner_preview(uow, app_id, body.user_id)
+        await mark_dirty(uow.conn, uow.org_id)
     return await _app_out(uow, app_id, request)

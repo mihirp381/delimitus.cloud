@@ -25,6 +25,7 @@ import { StatusBadge } from '../../components/Badge';
 import { Id } from '../../components/Copy';
 import { Icon } from '../../components/Icon';
 import { Loading } from '../../components/Loading';
+import { Notice } from '../../components/Notice';
 import { PageHeader } from '../../components/PageHeader';
 import { Person } from '../../components/Person';
 import { ProblemNotice } from '../../components/ProblemNotice';
@@ -63,7 +64,7 @@ function AppView({ app }: { readonly app: AppOut }) {
   const environments = [...app.environments].sort((a, b) => ENV_ORDER[a.name] - ENV_ORDER[b.name]);
   const env = environments.find((e) => e.name === appEnv(search.env)) ?? environments[0];
   const prod = environments.find((e) => e.name === 'prod');
-  const opens = environments.filter((e) => e.url);
+  const opens = app.owner_state === 'blocked' ? [] : environments.filter((e) => e.url);
 
   return (
     <>
@@ -105,6 +106,7 @@ function AppView({ app }: { readonly app: AppOut }) {
           </a>
         ))}
       </PageHeader>
+      <OwnerNotice app={app} />
       <nav className="tabs" aria-label="App sections">
         {APP_TABS.map((t) => (
           <Link
@@ -145,6 +147,29 @@ function AppView({ app }: { readonly app: AppOut }) {
         </>
       )}
     </>
+  );
+}
+
+/** An app whose owner is no longer active; with no active admin left either, it is turned off. */
+function OwnerNotice({ app }: { readonly app: AppOut }) {
+  if (app.owner_state === 'active') return null;
+  const blocked = app.owner_state === 'blocked';
+  return (
+    <Notice tone={blocked ? 'danger' : 'warn'} title="No owner. Assign one.">
+      <p>
+        {app.owner_name || 'Its owner'} is no longer active.{' '}
+        {blocked ? 'The app is turned off, in production and preview, until an org admin assigns an owner.' : null}
+        {blocked ? null : (
+          <>
+            An org admin assigns a new owner under{' '}
+            <Link to="/apps/$appId" params={{ appId: app.id }} search={appSearch({ tab: 'settings' })}>
+              Settings
+            </Link>
+            .
+          </>
+        )}
+      </p>
+    </Notice>
   );
 }
 

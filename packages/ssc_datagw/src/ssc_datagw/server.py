@@ -210,6 +210,7 @@ ERRORS: Final[Mapping[str, DataError]] = {
         503, "files", "platform", "File storage cannot be reached right now."
     ),
 }
+OWNER_NEEDED_MESSAGE: Final = "This app needs a named owner; ask your admin to assign one."
 
 
 class QueryBody(BaseModel):
@@ -238,9 +239,9 @@ class FileBody(BaseModel):
 
 class RefusedError(Exception):
     """One refusal: ``code`` in :data:`ERRORS`. ``reason`` goes to the log only; ``refused`` is
-    the app-facing reason of a ``QUERY_REFUSED``."""
+    the app-facing reason of a ``QUERY_REFUSED``; ``message`` replaces the code's."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913  (keyword-only)
         self,
         code: str,
         *,
@@ -248,13 +249,23 @@ class RefusedError(Exception):
         stage: Stage | None = None,
         sqlstate: str | None = None,
         refused: RefusedReason | None = None,
+        message: str | None = None,
     ) -> None:
         super().__init__(code)
         self.code = code
+        self.message = message
         self.reason = reason
         self.stage: Stage | None = stage
         self.sqlstate = sqlstate
         self.refused: RefusedReason | None = refused
+
+
+def _refusal(
+    code: Refusal, view: AccessView | None, env_id: str, *, stage: Stage | None = None
+) -> RefusedError:
+    env = None if view is None else view.environments.get(env_id)
+    owner_needed = code == "APP_NOT_ACTIVE" and env is not None and env.owner_needed
+    return RefusedError(code, stage=stage, message=OWNER_NEEDED_MESSAGE if owner_needed else None)
 
 
 async def _read_capped(request: Request, cap: int) -> bytes:
@@ -320,7 +331,7 @@ class Inflight:
     env_id: str
     name: str
     task: asyncio.Task[Result]
-    killed: Refusal | None = None
+    killed: RefusedError | None = None
 
 
 class KillWatch:
@@ -349,7 +360,7 @@ class KillWatch:
             for entry in list(self._inflight):
                 verdict = admit(view, entry.env_id, entry.name)
                 if isinstance(verdict, str) and entry.killed is None:
-                    entry.killed = verdict
+                    entry.killed = _refusal(verdict, view, entry.env_id, stage="execute")
                     entry.task.cancel()
                     log.warning("query ended by the snapshot: %s", verdict)
 
@@ -367,19 +378,20 @@ def _request_id(header: str | None) -> str:
     return header if header and _REQUEST_ID.fullmatch(header) else uuid.uuid4().hex
 
 
-def error_body(
+def error_body(  # noqa: PLR0913  (keyword-only)
     code: str,
     request_id: str,
     *,
     stage: Stage | None = None,
     sqlstate: str | None = None,
     refused: RefusedReason | None = None,
+    message: str | None = None,
 ) -> dict[str, Any]:
     entry = ERRORS[code]
     error: dict[str, Any] = {
         "code": code,
         "stage": stage or entry.stage,
-        "message": entry.message,
+        "message": message or entry.message,
         "fix_owner": entry.fix_owner,
     }
     if sqlstate is not None:
@@ -441,6 +453,7 @@ class DataGateway:
                 stage=refused.stage,
                 sqlstate=refused.sqlstate,
                 refused=refused.refused,
+                message=refused.message,
             )
             status = ERRORS[refused.code].status
             record.update(outcome=refused.code, reason=refused.reason)
@@ -471,6 +484,7 @@ class DataGateway:
                 stage=refused.stage,
                 sqlstate=refused.sqlstate,
                 refused=refused.refused,
+                message=refused.message,
             )
             status = ERRORS[refused.code].status
             record.update(outcome=refused.code, reason=refused.reason)
@@ -494,7 +508,7 @@ class DataGateway:
             record["snapshot_version"] = view.version
         refused = environment_refusal(view, workload.env_id)
         if refused is not None or view is None:
-            raise RefusedError(refused or "DATA_SNAPSHOT_STALE")
+            raise _refusal(refused or "DATA_SNAPSHOT_STALE", view, workload.env_id)
         admitted = admit(view, workload.env_id, name)
         if isinstance(admitted, str):
             raise RefusedError(admitted)
@@ -555,7 +569,9 @@ class DataGateway:
             body["request_id"] = request_id
             record["outcome"] = "served"
         except RefusedError as refused:
-            body = error_body(refused.code, request_id, stage=refused.stage)
+            body = error_body(
+                refused.code, request_id, stage=refused.stage, message=refused.message
+            )
             status = ERRORS[refused.code].status
             record.update(outcome=refused.code, reason=refused.reason)
         except Exception:
@@ -579,7 +595,7 @@ class DataGateway:
             record["snapshot_version"] = view.version
         refused = environment_refusal(view, workload.env_id)
         if refused is not None or view is None:
-            raise RefusedError(refused or "DATA_SNAPSHOT_STALE")
+            raise _refusal(refused or "DATA_SNAPSHOT_STALE", view, workload.env_id)
         raw = await _read_capped(request, MAX_BODY)
         try:
             body = FileBody.model_validate_json(raw)
@@ -638,7 +654,7 @@ class DataGateway:
             record["snapshot_version"] = view.version
         refused = environment_refusal(view, workload.env_id)
         if refused is not None or view is None:
-            raise RefusedError(refused or "DATA_SNAPSHOT_STALE")
+            raise _refusal(refused or "DATA_SNAPSHOT_STALE", view, workload.env_id)
         record["user"], record["user_context"] = self._user(
             view, workload.env_id, request.headers.get(IDENTITY_HEADER)
         )
@@ -759,7 +775,7 @@ class DataGateway:
             current = asyncio.current_task()
             if entry.killed is None or (current is not None and current.cancelling()):
                 raise
-            raise RefusedError(entry.killed, stage="execute") from None
+            raise entry.killed from None
         except TimeoutError as exc:
             raise RefusedError("QUERY_TIMEOUT") from exc
         except QueryRefusedError as exc:
