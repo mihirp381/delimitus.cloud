@@ -80,9 +80,10 @@ feature is built and tested locally and has not yet been run against a live doma
   months after the delegation was last seen. Once your NS records are gone, the zone can be
   emptied straight away. [ssc_control domains/lifecycle.py, `recheck` and `retire_allowed`]
 - Retiring empties the zone (the certificate, its map entry, its authorization and every record
-  but NS and SOA are deleted) and keeps the zone itself; an operator deletes it by hand after the
-  12 months. Remove the NS records at your parent when you leave: once the zone is deleted, a
-  delegation left in place is yours to clear.
+  but NS and SOA are deleted) and keeps the zone itself for as long as your organization's cell
+  exists, so a delegation you forget still points at a zone only we hold. Remove the NS records at
+  your parent when you leave: we will not shut down your cell while the public resolvers still see
+  them.
 - A delegated name is never given to anyone else: a retired subdomain that was ever delegated is
   kept on record for your organization (`ssc.org_suffix_retired`, its time set to the retire) and no other organization
   may ask for it, a name above it or a name below it. Any future clean-up of that table must keep

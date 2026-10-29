@@ -48,7 +48,7 @@ checks, use [CONTRIBUTING.md](../CONTRIBUTING.md); for code navigation, use the
 | [Cost reconciliation](runbooks/ssc-096-cost-reconciliation.md) | Compare usage records with cloud billing. |
 | [Kill switch drill](kill-switch-drill.md) | Measure app shutdown and revocation. |
 | [Public Suffix List refresh](../tools/psl_refresh.py) | `uv run python tools/psl_refresh.py` rewrites the vendored list (ICANN section) that suffix admission reads; `test_psl.py` fails once it is 90 days old. Vendored 2026-10-22: refresh before 2027-01-20. |
-| [Customer domain zone](plans/custom-domains-2026-10-26.md) | Never delete a zone by hand while the probe sees the delegation; after the cap, `gcloud dns managed-zones delete` in the cell project; a retired cell's project must outlive its delegated zones (dangling-delegation takeover). |
+| [Customer domain zone](plans/custom-domains-2026-10-26.md) | Never delete a customer zone: a retire empties it and keeps it, so a parent NS record left behind points at a zone we hold rather than one anyone could recreate on the same servers (dangling-delegation takeover). The zone goes only with its cell project, and cell destroy refuses while the org's domain is not retired or the resolvers still see its delegation. |
 
 ## Known limits
 

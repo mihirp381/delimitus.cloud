@@ -53,7 +53,7 @@ failure mode owned and visible on our side.
 |---|---|---|---|
 | Q1 | Identity note `aud`: keep the exact origin, or switch to the environment id (Pando's model)? | Environment id | Removes the re-apply job, the previous-origin verifier and the config roll at every suffix flip. The gateway still binds host to environment per request, so no security is lost. Changes `docs/contracts/identity-note.md`, `ssc_app`, the Node helper, conformance vectors and the data gateway check. |
 | Q2 | Minutes of disruption at trial-to-paid flip acceptable? | Yes for V1 | With Q1 = environment id the blip is one forced re-login, not a redeploy. With Q1 = origin, CD-2b is required. |
-| Q3 | Who owns the delegated zone after churn and for how long? | We keep it until a probe shows the parent no longer delegates, max 12 months, then delete | Closes dangling-delegation takeover; must be in the contract. |
+| Q3 | Who owns the delegated zone after churn and for how long? | We keep it for the life of the cell project; a retire waits for the parent to stop delegating, max 12 months, then empties the zone but never deletes it (amended 2026-10-28) | Closes dangling-delegation takeover: a forgotten NS record keeps pointing at our empty zone; must be in the contract. |
 | Q4 | Offer aliases (`salesdashboard.testorg.com`) at all in V1? | No, build CD-8 on first paid request | Per-name CT exposure and dependence on the customer's parent CAA. |
 | Q5 | Landing claim after live proof: "your subdomain, one delegation" or stay quiet? | Say it, with the CT and same-site notes in the trust pack | GTM decides. |
 | Q6 | Dedicated-domain option (customer buys `testorg-tools.com`) documented as the recommended choice for regulated customers? | Yes, documented only, same mechanics | Same-site risk (CD-5) is strongest argument for it. |
@@ -136,8 +136,9 @@ Success: answered above 2026-10-26; decision 004 amendment drafted (CD-7.1) with
   shows every change.
 
 **CD-3.3 Zone lifecycle and takeover guard.**
-- Offboarding: zone kept while a daily probe sees the parent delegating to our NS set; deleted after Q3's
-  limit; never recreated under the same name for another org.
+- Offboarding: the retire waits while the probe sees the parent delegating to our NS set, up to Q3's
+  limit, then empties the zone and keeps it for the life of the cell project; never recreated under
+  the same name for another org.
 - Success: test that `retire` refuses while the probe still sees the delegation; runbook entry in
   `docs/README.md` ops section.
 
