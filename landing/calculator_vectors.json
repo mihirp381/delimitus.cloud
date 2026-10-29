@@ -6,16 +6,16 @@
       "in": {
         "apps": 10,
         "rate": 68,
-        "setup": 80,
+        "setup": 240,
         "perApp": 12,
         "upkeep": 2
       },
       "out": {
         "cloud": 2738,
-        "setup": 5440,
+        "setup": 16320,
         "build": 8160,
         "upkeep": 16320,
-        "total": 32658
+        "total": 43538
       }
     },
     {
@@ -23,16 +23,16 @@
       "in": {
         "apps": 1,
         "rate": 68,
-        "setup": 80,
+        "setup": 240,
         "perApp": 12,
         "upkeep": 2
       },
       "out": {
         "cloud": 1673,
-        "setup": 5440,
+        "setup": 16320,
         "build": 816,
         "upkeep": 1632,
-        "total": 9561
+        "total": 20441
       }
     },
     {

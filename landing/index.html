@@ -1553,7 +1553,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
         <article class="trio__card" data-claim="econ-cloud econ-labour">
           <p class="trio__k">Deploy it yourself</p>
           <p class="trio__t">A cloud account, company login, a database, secrets, an IT review and upkeep.</p>
-          <p class="trio__fig" id="trioDiy">$32,658<span>First year, 10 apps, at list prices and IT time</span></p>
+          <p class="trio__fig" id="trioDiy">$43,538<span>First year, 10 apps, at list prices and IT time</span></p>
         </article>
         <article class="trio__card" data-claim="agent price">
           <p class="trio__k">Deploy with Delimitus</p>
@@ -1584,7 +1584,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
           <div class="calc__in" id="calcIn" hidden>
             <label>Apps<input type="number" inputmode="numeric" min="1" max="500" step="1" value="10" data-in="apps"></label>
             <label>IT rate, $ an hour<input type="number" inputmode="decimal" min="0" max="1000" step="1" value="68" data-in="rate"></label>
-            <label>Setup, hours<input type="number" inputmode="numeric" min="0" max="5000" step="1" value="80" data-in="setup"></label>
+            <label>Setup, hours<input type="number" inputmode="numeric" min="0" max="5000" step="1" value="240" data-in="setup"></label>
             <label>Hours per app<input type="number" inputmode="numeric" min="0" max="500" step="1" value="12" data-in="perApp"></label>
             <label>Upkeep, hours per app a month<input type="number" inputmode="decimal" min="0" max="200" step="0.5" value="2" data-in="upkeep"></label>
           </div>
@@ -1594,14 +1594,14 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
               <thead><tr><th scope="col">Item</th><th scope="col">Do it yourself</th><th scope="col">With Delimitus, we take over</th></tr></thead>
               <tbody>
                 <tr><td>Cloud bill, list prices</td><td data-out="cloud">$2,738</td><td>The cloud account and everything in it</td></tr>
-                <tr><td>IT setup, one time</td><td data-out="setup">$5,440</td><td>Company login, secrets and the database</td></tr>
+                <tr><td>IT setup, one time</td><td data-out="setup">$16,320</td><td>Company login, secrets and the database</td></tr>
                 <tr><td>IT time to put each app live</td><td data-out="build">$8,160</td><td>The deploy; your IT approves</td></tr>
                 <tr><td>IT upkeep, 12 months</td><td data-out="upkeep">$16,320</td><td>Keeping it running</td></tr>
               </tbody>
-              <tfoot><tr><td>Total</td><td data-out="total">$32,658</td><td data-claim="price">Pricing is agreed with each pilot</td></tr></tfoot>
+              <tfoot><tr><td>Total</td><td data-out="total">$43,538</td><td data-claim="price">Pricing is agreed with each pilot</td></tr></tfoot>
             </table>
           </div>
-          <p class="calc__note">Defaults: 10 apps, $68 an hour, 80 hours of setup, 12 hours per app, 2 hours of upkeep per app a month. The hours are our estimate; change them.</p>
+          <p class="calc__note">Defaults: 10 apps, $68 an hour, 240 hours of setup, 12 hours per app, 2 hours of upkeep per app a month. The setup hours come from Marmelab’s write-up; the hours per app and for upkeep are our estimate. Change any of them.</p>
         </div>
         <details class="src">
           <summary>Where the numbers come from</summary>
@@ -1614,7 +1614,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
             <li>Each app: one instance kept warm so the first visit is not slow (minimum instances 1; 1 vCPU, 512 MiB), $9.86: $6.57 for CPU and $3.29 for memory. Cloud Run pricing (cloud.google.com/run/pricing), idle minimum-instance rate, fetched 2026-10-07.</li>
           </ul>
           <p data-claim="econ-labour">IT rate: $47.66 an hour, the median pay of network and computer systems administrators (US Bureau of Labor Statistics, 2025), times 1.43 for benefits, because wages are 70.0% of what private employers pay per hour worked (BLS Employer Costs for Employee Compensation, June 2026). That is $68.15; the default rounds it to $68.</p>
-          <p data-claim="econ-labour">Hours, our estimate: 80 to set up the cloud account, network, company login, build pipeline, logs and a security review; 12 to put each app live; 2 a month per app for updates, access changes and fixes.</p>
+          <p data-claim="econ-labour src-marmelab">Setup, 240 hours: the low end of Marmelab’s production-grade figure, about two weeks plus one person-month at 40 hours a week (see the first footnote under the chart). Our estimate: 12 hours to put each app live, and 2 a month per app for updates, access changes and fixes.</p>
         </details>
         </div>
       </details>

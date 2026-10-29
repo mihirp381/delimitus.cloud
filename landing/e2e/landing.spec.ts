@@ -92,9 +92,9 @@ test('the calculator follows its inputs', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#calc')).toBeHidden();
   await page.locator('#model > summary').click();
-  await expect(page.locator('[data-out="total"]')).toHaveText('$32,658');
+  await expect(page.locator('[data-out="total"]')).toHaveText('$43,538');
   await page.locator('[data-in="apps"]').fill('1');
-  await expect(page.locator('[data-out="total"]')).toHaveText('$9,561');
+  await expect(page.locator('[data-out="total"]')).toHaveText('$20,441');
   await expect(page.locator('[data-out="apps"]')).toHaveText('1');
 });
 
@@ -341,7 +341,7 @@ test.describe('without JavaScript', () => {
     await page.goto('/');
     await expect(page.locator('#calcIn')).toBeHidden();
     await page.locator('#model > summary').click();
-    await expect(page.locator('[data-out="total"]')).toHaveText('$32,658');
+    await expect(page.locator('[data-out="total"]')).toHaveText('$43,538');
     await expect(page.locator('[data-out="cloud"]')).toHaveText('$2,738');
     await expect(page.locator('#term .chat__url')).toBeVisible();
     await expect(page.locator('#burst .burst__chips li').first()).toBeVisible();
