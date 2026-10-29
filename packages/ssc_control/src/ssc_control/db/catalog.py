@@ -243,7 +243,7 @@ APP_ROLE_PRIVILEGES: Final[Mapping[str, frozenset[str]]] = {
     "notification_outbox": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # sent ones pruned
     "oauth_code": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # expired ones pruned
     "oauth_client": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # unused ones pruned
-    "org_suffix_retired": frozenset({"SELECT", "INSERT", "DELETE"}),  # pruned after until
+    "org_suffix_retired": frozenset({"SELECT", "INSERT", "UPDATE", "DELETE"}),  # until shortened
     "org_domain": frozenset({"SELECT", "INSERT", "UPDATE"}),  # retired, never deleted
     "form_target": frozenset({"SELECT", "INSERT", "DELETE"}),  # replaced as a list
     "org_index": frozenset({"SELECT", "INSERT"}),  # unscoped; never UPDATE or DELETE

@@ -12,6 +12,7 @@ from ssc_control.audit import Actor, NewEvent, append_event
 from ssc_control.db.domains import OrgDomain, update_state
 from ssc_control.domains.probe import ProbeError, Resolver, delegation_gone, observe
 from ssc_control.runtime.cell_domains import CellDomains
+from ssc_control.snapshot.service import mark_dirty
 
 
 class RetireRefusedError(Exception):
@@ -20,7 +21,8 @@ class RetireRefusedError(Exception):
 
 _KEEP_SUFFIX = text(
     "insert into ssc.org_suffix_retired (org_id, suffix, until) values (:org, :suffix, :until) "
-    "on conflict do nothing"
+    "on conflict (org_id, suffix) do update "
+    "set until = least(ssc.org_suffix_retired.until, excluded.until)"
 )
 
 
@@ -70,6 +72,7 @@ async def retire(
     await agent.retire(row.suffix)
     if row.last_delegated_at is not None:
         await conn.execute(_KEEP_SUFFIX, {"org": row.org_id, "suffix": row.suffix, "until": now})
+        await mark_dirty(conn, row.org_id)
     retired = await update_state(conn, org_id=row.org_id, domain_id=row.id, state="retired")
     await append_event(
         conn,

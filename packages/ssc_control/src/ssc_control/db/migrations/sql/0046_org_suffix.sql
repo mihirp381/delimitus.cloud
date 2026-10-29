@@ -28,4 +28,4 @@ ALTER TABLE ssc.org_suffix_retired FORCE ROW LEVEL SECURITY;
 CREATE POLICY org_isolation ON ssc.org_suffix_retired USING (org_id = ssc.current_org())
   WITH CHECK (org_id = ssc.current_org());
 
-GRANT SELECT, INSERT, DELETE ON ssc.org_suffix_retired TO ssc_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ssc.org_suffix_retired TO ssc_app;

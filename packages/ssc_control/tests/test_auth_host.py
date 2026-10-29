@@ -15,6 +15,7 @@ import secrets
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -28,12 +29,16 @@ from ssc_testkit import Dsns, assert_problem
 from test_identity import BOB_IDP, BOB_UID, FOUNDER_IDP, World, new_world, profile
 
 from ssc_contracts.audit import ActorKind, AuditAction
+from ssc_contracts.domains import resource_name
 from ssc_contracts.errors import ErrorCode
 from ssc_control.api import Settings, create_app
 from ssc_control.api.auth import Verifier
 from ssc_control.api.settings import USER_AUDIENCE
 from ssc_control.audit.chain import Actor
 from ssc_control.db import NewOrg, bound_org, create_org, make_engine
+from ssc_control.db.domains import insert_domain, update_state
+from ssc_control.domains.flip import flip
+from ssc_control.domains.lifecycle import retire
 from ssc_control.identity import join, pages, sessions, tokens
 from ssc_control.identity.authhost import DEVICE_GRANT, AuthHost, create_auth_app
 from ssc_control.identity.cell_callers import CallerCheck, CellCaller, DevCallers
@@ -53,6 +58,7 @@ from ssc_control.identity.limits import (
 )
 from ssc_control.identity.rules import ReturnTo, parse_return_to
 from ssc_control.identity.settings import AuthSettings
+from ssc_control.runtime.cell_domains import FakeCellDomains
 from ssc_shared.hosts import cell_project
 
 AUTH = "https://auth.test"
@@ -325,6 +331,51 @@ async def test_a_login_link_may_name_a_suffix_the_org_left_in_the_last_30_days(r
     gone = await rig.http.get(
         "/login", params={**params, "return_to": f"https://ledger.gone.{base}/a"}
     )
+    assert (gone.status_code, gone.text) == (400, pages.BAD_REQUEST)
+
+
+async def test_a_retire_after_a_flip_back_ends_the_customer_suffix_at_once(rig: Rig) -> None:
+    custom = f"back.{rig.w.org[4:]}.testorg.com"
+    actor = Actor(ActorKind.OPERATOR, "op_dana")
+    now = datetime.now(UTC)
+    async with bound_org(rig.w.engine, rig.w.org) as conn:
+        row = await insert_domain(
+            conn, org_id=rig.w.org, suffix=custom, zone_name=resource_name(custom)
+        )
+        await update_state(
+            conn, org_id=rig.w.org, domain_id=row.id, state="active", last_delegated_at=now
+        )
+        await conn.execute(
+            text("update ssc.org set apps_suffix = :s where id = :org"),
+            {"org": rig.w.org, "s": custom},
+        )
+        default = f"{rig.label}.{DOMAIN}"
+        await flip(
+            conn,
+            rig.w.org,
+            "default",
+            actor,
+            now,
+            apps_domain=DOMAIN,
+            rolling=0,
+            counted_for=default,
+        )
+    params = {
+        "org": rig.w.org,
+        "binding": binding_of("n"),
+        "return_to": f"https://ledger.{custom}/a",
+    }
+    assert (await rig.http.get("/login", params=params)).status_code == 302
+    async with bound_org(rig.w.engine, rig.w.org) as conn:
+        row = await update_state(
+            conn,
+            org_id=rig.w.org,
+            domain_id=row.id,
+            state="active",
+            observed_ns={"cloudflare": [], "google": [], "quad9": []},
+        )
+        await retire(conn, FakeCellDomains(), row, actor, datetime.now(UTC))
+    gone = await rig.http.get("/login", params=params)
     assert (gone.status_code, gone.text) == (400, pages.BAD_REQUEST)
 
 
