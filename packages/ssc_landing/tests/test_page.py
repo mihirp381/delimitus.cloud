@@ -320,6 +320,8 @@ REMOVED = (
     "No custom domains",
     "No inbound webhooks",
     "Measured: one prompt to a running preview",
+    'id="race"',
+    "data-race",
 )
 ADDED = (
     "Secure data connections",
@@ -366,26 +368,57 @@ def test_the_case_panel_shows_the_warehouse_asks_without_javascript() -> None:
     assert "Company login on, with no setup" in simple[2]
 
 
-def test_the_long_way_agrees_with_the_calculator_vectors() -> None:
-    vectors = json.loads((LANDING / "calculator_vectors.json").read_text(encoding="utf-8"))
-    default = vectors["vectors"][0]
-    cost = re.search(r'<section[^>]*id="cost".*?</section>', HTML, flags=re.S)
-    assert cost is not None
-    race = re.search(r'<div class="race" id="race".*?<div class="trio">', cost[0], re.S)
-    assert race is not None
-    hours = re.search(r'data-race="hours">(\d+)<', race[0])
-    assert hours is not None
-    assert int(hours[1]) == default["in"]["setup"] + default["in"]["perApp"] == 92
-    fixed = re.search(r"var CLOUD_FIXED_CENTS = (\d+);", HTML)
-    per_app = re.search(r"var CLOUD_PER_APP_CENTS = (\d+);", HTML)
-    assert fixed is not None and per_app is not None
-    cloud = (int(fixed[1]) + int(per_app[1]) * default["in"]["apps"]) * 12 / 100
-    assert round(cloud) == default["out"]["cloud"]
-    assert "$129.53 a month before the first app" in race[0]
-    assert int(fixed[1]) == 12953
-    total = re.search(r'data-race="total">\$([\d,]+)<', race[0])
-    assert total is not None
-    assert int(total[1].replace(",", "")) == default["out"]["total"] == 32658
-    assert "First year, 10 apps: " in race[0]
-    for word in ("approved", "granted"):
-        assert word not in race[0]
+def _bars() -> str:
+    found = re.search(r'<div class="bars" id="bars">.*?\n      </div>\n', HTML, flags=re.S)
+    assert found is not None
+    return found[0]
+
+
+def test_the_cost_chart_shows_four_sourced_rows() -> None:
+    rows = re.findall(
+        r'<div class="bars__row bars__row--(diy|dlm)" data-claim="([^"]+)">\s*'
+        r'<p class="bars__l">([^<]+) <span>([^<]+)</span></p>.*?'
+        r'<p class="bars__n"[^>]*>([^<]+)</p>\s*<p class="bars__src">([^<]+)</p>',
+        _bars(),
+        flags=re.S,
+    )
+    assert [r[:5] for r in rows[:3]] == [
+        (
+            "diy",
+            "src-marmelab",
+            "Build it yourself",
+            "Your own platform, to production grade",
+            "240–400 h",
+        ),
+        (
+            "dlm",
+            "src-forrester-okta",
+            "With Delimitus",
+            "Connect company login, once",
+            "about 10 h",
+        ),
+        ("diy", "src-metricnet", "IT ticket", "Granting access by hand", "98 min"),
+    ]
+    assert rows[3][:4] == ("dlm", "approve-measured", "With Delimitus", "Approve in the console")
+    sources = [r[5] for r in rows]
+    assert "François Zaninotto, Marmelab, 15 October 2026" in sources[0]
+    assert "Hours at 40 a week and 160 a person-month." in sources[0]
+    assert "commissioned by Okta, July 2026" in sources[1]
+    assert "desktop-support service request of any kind, not only access" in sources[2]
+    assert "MetricNet" in sources[2]
+
+
+def test_the_bars_are_drawn_to_their_scales() -> None:
+    assert 'bars__v--range::before { content: ""; display: block; width: 60cqw;' in HTML
+    assert ".bars__v--login { width: max(6px, 2.5%); }" in HTML
+    assert ".bars__v--ticket { width: 98%; }" in HTML
+    for word in ("caution", "race"):
+        assert word not in _bars()
+
+
+def test_the_approval_time_is_measured() -> None:
+    """Red until the founder's timing replaces the placeholder."""
+    value = re.search(r'<p class="bars__n" id="approveTime">([^<]*)</p>', HTML)
+    assert value is not None
+    assert re.search(r"\d", value[1])
+    assert "MEASURE" not in HTML
