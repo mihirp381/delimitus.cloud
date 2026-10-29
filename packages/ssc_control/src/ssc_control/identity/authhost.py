@@ -49,7 +49,7 @@ import time
 import unicodedata
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any, Final, Literal, cast
 from urllib.parse import parse_qs, urlencode
 
@@ -64,7 +64,7 @@ from ssc_control.api.auth import Principal, PrincipalKind, Verifier
 from ssc_control.api.problems import Refusal
 from ssc_control.audit.chain import Actor, NewEvent, append_event
 from ssc_control.db import bound_org, check_org_id
-from ssc_control.db.orgs import load_suffix
+from ssc_control.db.orgs import load_suffix, retired_suffixes
 from ssc_control.identity import join, pages, sessions, social, tokens
 from ssc_control.identity.authorize import DEVICE_GRANT, Kit, OAuthFlow
 from ssc_control.identity.cell_callers import CallerCheck
@@ -448,7 +448,9 @@ def create_auth_app(host: AuthHost) -> FastAPI:  # noqa: C901, PLR0915  (one rou
             if sign_in is None or suffix is None:
                 log.info("login refused for %s: no active connection or cell", org_id)
                 return bad_request()
-            target = parse_return_to(q.get("return_to", ""), suffix=suffix)
+            at = datetime.fromtimestamp(host.clock(), UTC)
+            moved = [r.suffix for r in await retired_suffixes(conn, org_id) if r.until > at]
+            target = parse_return_to(q.get("return_to", ""), suffixes=[suffix, *moved])
             if target is None:
                 return bad_request()
             flow = {

@@ -275,7 +275,7 @@ async def test_a_bad_login_link_is_refused(rig: Rig, change: dict[str, str]) -> 
 
 def test_a_return_to_is_an_app_host_under_the_orgs_own_suffix() -> None:
     own = "tools.testorg.com"
-    assert parse_return_to("https://ledger.tools.testorg.com/a?b=1", suffix=own) == ReturnTo(
+    assert parse_return_to("https://ledger.tools.testorg.com/a?b=1", suffixes=[own]) == ReturnTo(
         "ledger.tools.testorg.com", "/a?b=1"
     )
     for other in (
@@ -284,7 +284,7 @@ def test_a_return_to_is_an_app_host_under_the_orgs_own_suffix() -> None:
         "https://a.ledger.tools.testorg.com/",
         "https://tools.testorg.com/",
     ):
-        assert parse_return_to(other, suffix=own) is None
+        assert parse_return_to(other, suffixes=[own]) is None
 
 
 async def test_a_login_link_follows_the_orgs_suffix(rig: Rig) -> None:
@@ -300,6 +300,32 @@ async def test_a_login_link_follows_the_orgs_suffix(rig: Rig) -> None:
     assert custom.status_code == 302
     default = await rig.http.get("/login", params={**params, "return_to": rig.app_url()})
     assert (default.status_code, default.text) == (400, pages.BAD_REQUEST)
+
+
+async def test_a_login_link_may_name_a_suffix_the_org_left_in_the_last_30_days(rig: Rig) -> None:
+    base = f"{rig.w.org[4:]}.testorg.com"
+    async with bound_org(rig.w.engine, rig.w.org) as conn:
+        await conn.execute(
+            text("update ssc.org set apps_suffix = :s where id = :org"),
+            {"org": rig.w.org, "s": f"now.{base}"},
+        )
+        await conn.execute(
+            text(
+                "insert into ssc.org_suffix_retired (org_id, suffix, until) values "
+                "(:org, :moved, now() + interval '29 days'), "
+                "(:org, :gone, now() - interval '1 minute')"
+            ),
+            {"org": rig.w.org, "moved": f"moved.{base}", "gone": f"gone.{base}"},
+        )
+    params = {"org": rig.w.org, "binding": binding_of("n")}
+    moved = await rig.http.get(
+        "/login", params={**params, "return_to": f"https://ledger.moved.{base}/a"}
+    )
+    assert moved.status_code == 302
+    gone = await rig.http.get(
+        "/login", params={**params, "return_to": f"https://ledger.gone.{base}/a"}
+    )
+    assert (gone.status_code, gone.text) == (400, pages.BAD_REQUEST)
 
 
 async def test_a_callback_without_its_login_cookie_or_state_is_refused(rig: Rig) -> None:
