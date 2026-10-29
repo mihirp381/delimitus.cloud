@@ -3,6 +3,7 @@ subdomain, has IT add its NS records, then moves every app to it. An agent may r
 change it."""
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Annotated, Final
 
 import typer
@@ -196,10 +197,24 @@ def _zone_made(client: ApiClient, sleep: Sleep, d: DomainOut) -> DomainOut:
     return d
 
 
-def _wait(client: ApiClient, sleep: Sleep, seconds: int) -> DomainOut:
+def _changes(json_mode: bool) -> Callable[[str], None]:
+    def note(state: str) -> None:
+        if not json_mode:
+            stamp = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+            typer.echo(f"{stamp} {state}", err=True)
+
+    return note
+
+
+def _wait(client: ApiClient, sleep: Sleep, seconds: int, note: Callable[[str], None]) -> DomainOut:
     budget = Budget(seconds)
+    last: str | None = None
     while True:
         d = client.get_domain()
+        state = d.delegation.state if d.delegation else "none"
+        if state != last:
+            note(state)
+            last = state
         if d.delegation is None or d.delegation.state in ENDED:
             return d
         if budget.used_up:
@@ -221,10 +236,11 @@ def status(
     timeout: TimeoutOpt = WAIT_SECONDS,
     json_mode: JsonOpt = False,
 ) -> None:
-    """One line per field of the own address; --wait polls until it is active or failed."""
+    """One line per field of the own address; --wait polls until it is active or failed,
+    printing the time of each state it sees."""
     s = session(ctx)
     with handled(json_mode), s.client() as client:
-        d = _wait(client, s.sleep, timeout) if wait else client.get_domain()
+        d = _wait(client, s.sleep, timeout, _changes(json_mode)) if wait else client.get_domain()
         r = result_of(client.api_url, d)
         if wait and r.state == "failed":
             body = ErrorBody(

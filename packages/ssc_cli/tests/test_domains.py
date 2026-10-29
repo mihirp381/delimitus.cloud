@@ -1,6 +1,7 @@
 """``ssc domains`` against a fake API: show, add, status (and --wait) and flip."""
 
 import json
+import re
 
 import httpx2
 import pytest
@@ -192,6 +193,25 @@ def test_status_wait_polls_until_active(cli, api, isolated):
     out = DomainResult.model_validate(r.json())
     assert (out.state, out.ready_to_flip) == ("active", True)
     assert slept == [POLL_SECONDS, POLL_SECONDS]
+
+
+def test_status_wait_prints_each_state_change_with_its_time(cli, api):
+    api.add(
+        "GET",
+        "/v1/domain",
+        _ok(_domain("pending_dns")),
+        _ok(_domain("pending_dns")),
+        _ok(_domain("issuing")),
+        _ok(_domain("issuing")),
+        _ok(_domain("active")),
+    )
+    r = cli("domains", "status", "--wait", session=api.session())
+    assert r.code == 0, r.stderr
+    lines = r.stderr.splitlines()
+    assert [line.split(" ", 1)[1] for line in lines] == ["pending_dns", "issuing", "active"]
+    for line in lines:
+        assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ \w+", line), line
+    assert r.stdout.splitlines()[0] == "state: active"
 
 
 def test_status_wait_ends_on_failed_and_on_the_timeout(cli, api):
