@@ -70,6 +70,11 @@ def name(b: Bench, first: str = "tools") -> str:
     return f"{first}-{b.w.org[4:]}.testorg.com"
 
 
+def mine(b: Bench, fake: FakeCellDomains) -> list[tuple[str, str]]:
+    """The cell calls for this org's names: the tick also makes other tests' rows."""
+    return [c for c in fake.calls if f"-{b.w.org[4:]}." in c[1]]
+
+
 def label(b: Bench) -> str:
     return str(rows_of(b.dsn, b.w.org, "select cell_label from ssc.org")[0]["cell_label"])
 
@@ -259,7 +264,7 @@ async def test_an_admin_asks_for_a_domain_once(b: Bench) -> None:
     assert again.status_code == 200
     assert again.json()["delegation"]["id"] == d["id"]
     assert len(domain_audit(b)) == 1
-    assert fake.calls == [("create", name(b))]
+    assert mine(b, fake) == [("create", name(b))]
     assert_problem(put(b, name(b, "other"), b.t.admin), ErrorCode.ALREADY_EXISTS)
     assert get(b, "/v1/domain", b.t.admin).json()["delegation"] == d
 
@@ -280,7 +285,11 @@ async def test_a_failed_domain_is_replaced(b: Bench) -> None:
     other = put(b, name(b, "other"), b.t.admin).json()["delegation"]
     assert (other["suffix"], other["state"]) == (name(b, "other"), "pending_dns")
     await made(b, fake)
-    assert fake.calls == [("create", name(b)), ("create", name(b)), ("create", name(b, "other"))]
+    assert mine(b, fake) == [
+        ("create", name(b)),
+        ("create", name(b)),
+        ("create", name(b, "other")),
+    ]
     states = rows_of(b.dsn, b.w.org, "select suffix, state from ssc.org_domain order by suffix")
     assert states == [
         {"suffix": name(b, "other"), "state": "pending_dns"},

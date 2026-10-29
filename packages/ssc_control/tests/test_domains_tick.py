@@ -113,6 +113,11 @@ class Refusing(FakeCellDomains):
         raise CellDomainsError("agent down")
 
 
+def of(fake: FakeCellDomains, suffix: str) -> list[tuple[str, str]]:
+    """The cell calls for one name: a tick also passes over other tests' rows."""
+    return [c for c in fake.calls if c[1] == suffix]
+
+
 async def asked(engine: AsyncEngine, org: str) -> OrgDomain:
     suffix = f"tools.{org[4:]}.com"
     async with bound_org(engine, org) as conn:
@@ -135,7 +140,7 @@ async def test_the_tick_has_the_cell_make_a_new_row_s_zone_once(
     )
     assert seen.certificate is not None
     await tick(engine, cells(fake), parent, datetime.now(UTC))
-    assert fake.calls == [("create", row.suffix)]
+    assert of(fake, row.suffix) == [("create", row.suffix)]
     assert audit(dsns.app, org) == []
 
 
@@ -172,7 +177,7 @@ async def test_a_failed_domain_s_zone_is_emptied_before_the_row_fails(
     assert (await current(engine, org)).state == "pending_dns"
     await tick(engine, cells(fake), wrong, late)
     assert (await current(engine, org)).state == "failed"
-    assert fake.calls[-1] == ("retire", row.suffix)
+    assert of(fake, row.suffix)[-1] == ("retire", row.suffix)
 
 
 async def test_a_domain_moves_from_pending_to_active(
