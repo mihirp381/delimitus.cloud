@@ -183,11 +183,14 @@ own; its calls are recorded the same way. Set it up once:
 
 - The rules below name SSC's helpers. Each is an ordinary dependency: add the one the app imports
   to its dependency list and its lock file, like any other package.
-- Python: `ssc-app` on PyPI (`pip install ssc-app`), imported as `ssc_app`, for Python 3.11 or
-  newer. It asks only for ranges of `pydantic` and `pyjwt[crypto]`, so the app keeps its own pins.
+- Python: `ssc-app` on PyPI (`pip install ssc-app`), imported as `ssc_app`, for
+  Python 3.11 or newer. It asks only for ranges of `pydantic` and `pyjwt[crypto]`, so the app
+  keeps its own pins.
 - Node: `@delimitus/ssc-identity`, `@delimitus/ssc-reconnect`, `@delimitus/ssc-files` and
   `@delimitus/ssc-data` on npm (`npm install @delimitus/ssc-identity`, and so on), for Node 22
   or newer. They are ES modules; a CommonJS app can `require()` them on Node 22.12 or newer.
+- Use `ssc-app` and `@delimitus/ssc-identity` 0.0.6 or newer: older ones refuse every identity
+  note.
 
 ### Sleeping, sessions and limits
 

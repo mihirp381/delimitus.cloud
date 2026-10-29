@@ -491,6 +491,10 @@ def test_pack_names_the_helpers_as_they_are_published(cli, tmp_path):
     for name in named:
         assert "private" not in node[name], name
         assert f"Node {node[name]['engines']['node'].removeprefix('>=')} or newer" in agents
+    floor = "`ssc-app` and `@delimitus/ssc-identity` 0.0.6 or newer"
+    assert floor in agents
+    for version in (project["version"], node["@delimitus/ssc-identity"]["version"]):
+        assert tuple(map(int, version.split("."))) >= (0, 0, 6), version
 
 
 def test_pack_says_how_an_app_reads_a_data_connection(cli, tmp_path):

@@ -10,7 +10,7 @@ Write the UTC time of every step and every state change in the evidence file (be
 
 - The vendored Public Suffix List is from 2026-10-22, and `test_psl` fails once it is 90 days old. If today is past 2027-01-20, refresh it first (`uv run python tools/psl_refresh.py`, `docs/README.md`).
 - The cell agent's role `sscCellAgentDomains` holds `certificatemanager.dnsauthorizations.use` and `certificatemanager.certs.use`. Step 2 is the first time it uses them against real Google APIs, so watch the agent's log during that step.
-- The cell's gateway signs env-id notes, so the org's apps are built on helpers 0.0.6 or later (`docs/contracts/identity-note.md`, amendment 2026-10-28). Release order: publish 0.0.6, rebuild the apps, roll the gateway.
+- The cell's gateway signs env-id notes, so the org's apps pass `audience` from `SSC_APP_ENV_ID` and are built on `ssc-app` / `@delimitus/ssc-identity` 0.0.6 or later (`docs/contracts/identity-note.md`, amendment 2026-10-28); the helpers never read the environment. Release order: publish 0.0.6, change `audience` to `SSC_APP_ENV_ID` and rebuild each app, then roll the gateway.
 - The worker runs `domains:tick` (`gcloud run jobs executions list` on the worker, or its log line `domains tick`).
 
 ## Steps
