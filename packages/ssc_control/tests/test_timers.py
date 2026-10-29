@@ -556,24 +556,28 @@ async def test_a_deploy_arms_prod_only_on_live_authority(b: Bench) -> None:
     assert actions(b, tick["id"])[-1] == ("schedule.paused", "user", b.w.builder)
 
 
-async def test_the_call_names_the_org_s_own_domain_for_a_redirect(b: Bench) -> None:
+@pytest.mark.parametrize("state", ["active", "pending_dns", "issuing", "failed", "retiring"])
+async def test_the_call_names_the_org_s_own_domain_for_a_redirect_once_active(
+    b: Bench, state: str
+) -> None:
     suffix = f"tools-{b.w.org[4:]}.testorg.com"
     execute(
         b.dsn,
         b.w.org,
         "insert into ssc.org_domain (id, org_id, suffix, zone_name, state) "
-        "values (%s, %s, %s, %s, 'active')",
+        "values (%s, %s, %s, %s, %s)",
         new_id("dom"),
         b.w.org,
         suffix,
         f"ssc-d-{secrets.token_hex(6)}",
+        state,
     )
     await sync(b, b.w.preview, declared())
     sid = live(b, b.w.preview)["tick"]["id"]
     assert post(b, url(b, b.w.preview, sid, "/runs"), b.t.builder).status_code == 202
     assert await fire(b, manual(b, sid)) == "succeeded"
     (call,) = cast("FakeScheduleDispatcher", b.dispatcher).calls
-    assert (call.apps_suffix, call.domain_suffix) == (None, suffix)
+    assert (call.apps_suffix, call.domain_suffix) == (None, suffix if state == "active" else None)
 
 
 async def test_preview_schedules_are_paused_and_run_by_hand(b: Bench) -> None:

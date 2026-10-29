@@ -89,7 +89,7 @@ _SCHEDULE = text(
     "s.timeout_seconds, s.state, s.pause_reason, s.next_run_at, s.declared_by_user_id, "
     "e.name as environment_name, a.id as app_id, a.status as app_status, a.slug, "
     "g.cell_label, g.apps_suffix, (select m.suffix from ssc.org_domain m "
-    "where m.org_id = s.org_id and m.state <> 'retired') as domain_suffix, "
+    "where m.org_id = s.org_id and m.state = 'active') as domain_suffix, "
     "coalesce(b.manifest #>> '{runtime,health_path}', '/') as health_path, "
     f"o.status = 'active' as owner_active, {may_build('d')} as declarer_may_build "
     "from ssc.schedule s "

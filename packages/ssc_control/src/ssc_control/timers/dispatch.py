@@ -40,7 +40,7 @@ class TimerCall:
     """Where ``start`` asks: the manifest's ``runtime.health_path`` of the running release."""
     apps_suffix: str | None = None
     domain_suffix: str | None = None
-    """The org's own domain that is not retired: with the default suffix, where a ``307`` may
+    """The org's own domain once it is active: with the default suffix, where a ``307`` may
     send the call once more."""
 
 
