@@ -55,6 +55,10 @@ _ACTIONS: Final[Mapping[DomainState, AuditAction]] = {
 }
 
 
+class _NotEmptiedError(Exception):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class Step:
     state: DomainState
@@ -102,6 +106,8 @@ async def tick(
                 changed.append(row.id)
             elif outcome == "stalled":
                 stalled.append(row.id)
+        except _NotEmptiedError:
+            errors.append(row.id)
         except Exception:
             log.exception("domain tick failed for a row", extra={"domain_id": row.id})
             errors.append(row.id)
@@ -123,7 +129,7 @@ async def _step(
     else:
         return None
     if step is not None and step.state == "failed" and not await _emptied(row, cells):
-        return None
+        raise _NotEmptiedError
     return step
 
 

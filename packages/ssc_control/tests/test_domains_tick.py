@@ -173,9 +173,11 @@ async def test_a_failed_domain_s_zone_is_emptied_before_the_row_fails(
     row = await requested(engine, org, fake)
     wrong = resolvers({row.suffix: OTHER_NS})
     late = row.created_at + timedelta(hours=72)
-    await tick(engine, cells(Refusing()), wrong, late)
+    report = await tick(engine, cells(Refusing()), wrong, late)
+    assert row.id in report.errors
     assert (await current(engine, org)).state == "pending_dns"
-    await tick(engine, cells(fake), wrong, late)
+    report = await tick(engine, cells(fake), wrong, late)
+    assert row.id not in report.errors
     assert (await current(engine, org)).state == "failed"
     assert of(fake, row.suffix)[-1] == ("retire", row.suffix)
 
