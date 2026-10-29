@@ -69,6 +69,8 @@ redirected to the apex by the service.
   The cost section's bar chart grows each bar from the left, 150 ms apart, once it is in view, once
   per page load, with no fade. Under reduced motion, or with no IntersectionObserver, and with
   JavaScript off, the bars show at full width.
+  Its "Sources and method" link opens the cost model and its sources and scrolls there; with
+  JavaScript off it only jumps to the cost model.
 
 ## Sign in
 

@@ -374,54 +374,59 @@ def _bars() -> str:
     return found[0]
 
 
-def test_the_cost_chart_shows_four_sourced_rows() -> None:
+def _sources() -> str:
+    found = re.search(r'<details class="src" id="sources">.*?</details>', HTML, flags=re.S)
+    assert found is not None
+    return found[0]
+
+
+def test_the_cost_chart_shows_four_one_line_rows() -> None:
+    card = _bars()
     rows = re.findall(
         r'<div class="bars__row bars__row--(diy|dlm)" data-claim="([^"]+)">\s*'
-        r'<p class="bars__l">([^<]+) <span>([^<]+)</span></p>.*?'
-        r'<p class="bars__n"[^>]*>([^<]+)</p>\s*<p class="bars__src">(.*?)</p>',
-        _bars(),
-        flags=re.S,
+        r'<p class="bars__l">([^<]+)</p>\s*'
+        r'<div class="bars__track" aria-hidden="true"><span class="[^"]+"></span></div>\s*'
+        r'<p class="bars__n"[^>]*>([^<]+)</p>\s*</div>',
+        card,
     )
-    assert [r[:5] for r in rows[:3]] == [
-        (
-            "diy",
-            "src-marmelab",
-            "Build it yourself",
-            "Your own platform, to production grade",
-            "240–400 h",
-        ),
-        (
-            "dlm",
-            "src-forrester-okta",
-            "With Delimitus",
-            "Connect company login, once",
-            "about 10 h",
-        ),
-        ("diy", "src-metricnet", "IT ticket", "A service request, done by hand", "98 min"),
+    assert rows == [
+        ("diy", "src-marmelab", "Yourself", "240–400 h"),
+        ("dlm", "src-forrester-okta", "Delimitus", "~10 h"),
+        ("diy", "src-metricnet", "Yourself", "98 min"),
+        ("dlm", "approve-estimate", "Delimitus", "~15 min"),
     ]
-    assert rows[3][:5] == (
-        "dlm",
-        "approve-estimate",
-        "With Delimitus",
-        "IT review in the console",
-        "about 15 min",
+    assert re.findall(r'<figcaption class="bars__u">([^<]+)</figcaption>', card) == [
+        "Setup · IT hours",
+        "Each request · minutes",
+    ]
+    for gone in ("<sup", "<ol", "<li", "bars__src", "bars__notes", "<span>", "http"):
+        assert gone not in card
+    end = re.search(r'<p class="bars__end" data-claim="approve-estimate">(.*?)</p>', card)
+    assert end is not None
+    assert (
+        end[1]
+        == '~15 min is our estimate. <a href="#model" id="toSources">Sources and method</a> ↓'
     )
-    assert [r[5] for r in rows] == [
-        "Marmelab, Oct 2026 <sup>1</sup>",
-        "Forrester for Okta, Jul 2026 <sup>2</sup>",
-        "MetricNet, 2023 <sup>3</sup>",
-        "Our estimate <sup>4</sup>",
-    ]
-    notes = re.findall(r'<li data-claim="([^"]+)">([^<]+)</li>', _bars())
-    assert [n[0] for n in notes] == [r[1] for r in rows]
-    marmelab, forrester, metricnet, _ = (n[1] for n in notes)
+
+
+def test_the_chart_citations_are_in_the_sources_details() -> None:
+    model = re.search(
+        r'<details class="src model" id="model">.*?</details>\s*</div>\s*</details>', HTML, re.S
+    )
+    assert model is not None and _sources() in model[0]
+    notes = dict(re.findall(r'<li data-claim="([a-z-]+)">([^<]+)</li>', _sources()))
+    marmelab = notes["src-marmelab"]
     assert "Marmelab blog, 15 October 2026" in marmelab
-    assert "Hours at 40 a week and 160 a person-month" in marmelab
+    assert "Hours at 40 a week and 160 a person-month: 80 + 1–2 × 160 = 240–400 h." in marmelab
     assert "marmelab.com/blog/2026/10/15/building-your-own-ai-platform.html" in marmelab
+    forrester = notes["src-forrester-okta"]
     assert "commissioned by Okta, July 2026" in forrester
     assert "tei.forrester.com/go/Okta/IdentitySecurityFabric/index.html?lang=en-us" in forrester
+    metricnet = notes["src-metricnet"]
     assert "desktop-support service request of any kind, not only access" in metricnet
     assert "brighttalk.com/resource/core/447335/" in metricnet
+    assert "Our estimate: about 15 minutes" in notes["approve-estimate"]
+    assert "footnote" not in HTML
 
 
 def test_the_bars_are_drawn_to_their_scales() -> None:
@@ -436,10 +441,11 @@ def test_the_bars_are_drawn_to_their_scales() -> None:
 def test_the_approval_time_is_our_estimate() -> None:
     value = re.search(r'<p class="bars__n" id="approveTime">([^<]*)</p>', HTML)
     assert value is not None
-    assert value[1] == "about 15 min"
+    assert value[1] == "~15 min"
     note = re.search(r'<li data-claim="approve-estimate">([^<]+)</li>', HTML)
     assert note is not None
-    assert note[1].startswith("Our estimate: ")
+    assert "Our estimate: about 15 minutes for IT to review and approve one request" in note[1]
+    assert "~15 min is our estimate." in _bars()
     register = (LANDING / "CLAIMS.md").read_text(encoding="utf-8")
     assert "MEASURE" not in HTML
     assert "MEASURE" not in register

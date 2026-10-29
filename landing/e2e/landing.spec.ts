@@ -165,10 +165,10 @@ test('the list bursts out of the prompt and settles in place', async ({ page }) 
 });
 
 const ROWS = [
-  ['Build it yourself', 'Your own platform, to production grade', '240–400 h'],
-  ['With Delimitus', 'Connect company login, once', 'about 10 h'],
-  ['IT ticket', 'A service request, done by hand', '98 min'],
-  ['With Delimitus', 'IT review in the console', 'about 15 min'],
+  ['Yourself', '240–400 h'],
+  ['Delimitus', '~10 h'],
+  ['Yourself', '98 min'],
+  ['Delimitus', '~15 min'],
 ];
 async function barWidths(page: Page) {
   return page.locator('#bars .bars__v').evaluateAll((bars) =>
@@ -183,24 +183,40 @@ async function expectFullWidth(page: Page) {
   expect(Math.abs(review.bar - review.track * 0.15)).toBeLessThan(1);
 }
 
-test('the chart shows four rows, each with its value and a source', async ({ page }) => {
+test('the chart shows four one-line rows and no citations of its own', async ({ page }) => {
   await page.goto('/');
   const rows = page.locator('#bars .bars__row');
   await expect(rows).toHaveCount(4);
-  for (const [i, [label, sub, value]] of ROWS.entries()) {
+  for (const [i, [label, value]] of ROWS.entries()) {
     const row = rows.nth(i);
-    await expect(row.locator('.bars__l')).toHaveText(`${label} ${sub}`);
+    await expect(row.locator('.bars__l')).toHaveText(label);
     await expect(row.locator('.bars__n')).toHaveText(value);
-    await expect(row.locator('.bars__src')).not.toBeEmpty();
     await expect(row.locator('.bars__track')).toHaveAttribute('aria-hidden', 'true');
+    const [l, t, n] = await row.locator('.bars__l, .bars__track, .bars__n').evaluateAll((els) =>
+      els.map((e) => { const r = e.getBoundingClientRect(); return r.top + r.height / 2; }),
+    );
+    expect(Math.abs(l - t)).toBeLessThan(3);
+    expect(Math.abs(n - t)).toBeLessThan(3);
   }
-  await expect(page.locator('#bars figure')).toHaveCount(2);
-  await expect(page.locator('#bars .bars__src sup')).toHaveText(['1', '2', '3', '4']);
-  await expect(page.locator('#bars .bars__notes li')).toHaveCount(4);
-  await expect(page.locator('#bars .bars__src').last()).toHaveText('Our estimate 4');
-  await expect(page.locator('#bars .bars__notes li').last()).toContainText('Our estimate: about 15 minutes');
-  await expect(page.locator('#bars figcaption').first()).toContainText('Before the first app');
-  await expect(page.locator('#bars figcaption').last()).toContainText('Each request after that');
+  await expect(page.locator('#bars figcaption')).toHaveText(['Setup · IT hours', 'Each request · minutes']);
+  await expect(page.locator('#bars sup, #bars ol, #bars li, #bars .bars__l span')).toHaveCount(0);
+  await expect(page.locator('#bars .bars__end')).toHaveText('~15 min is our estimate. Sources and method ↓');
+});
+
+test('sources and method opens the cost model and its sources', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#model')).not.toHaveAttribute('open', '');
+  await page.locator('#toSources').click();
+  await expect(page.locator('#model')).toHaveAttribute('open', '');
+  await expect(page.locator('#sources')).toHaveAttribute('open', '');
+  await expect(page.locator('#sources > summary')).toBeInViewport();
+  await expect(page.locator('#sources > summary')).toBeFocused();
+  const cites = page.locator('#sources li[data-claim]');
+  await expect(cites).toHaveCount(4);
+  await expect(cites.nth(0)).toContainText('80 + 1–2 × 160 = 240–400 h');
+  await expect(cites.nth(1)).toContainText('commissioned by Okta, July 2026');
+  await expect(cites.nth(2)).toContainText('MetricNet');
+  await expect(cites.nth(3)).toContainText('Our estimate: about 15 minutes');
 });
 
 test('the panels sit side by side from 900px and stack below', async ({ page }) => {
