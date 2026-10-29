@@ -9,9 +9,11 @@ from dataclasses import dataclass
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 from ssc_testkit import ISSUER, Dsns
 
+from ssc_contracts.domains import resource_name
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_control.db import bound_org, make_engine
@@ -56,15 +58,19 @@ async def hold(o: Orgs, org: str, sql: str, **params: object) -> None:
         await conn.execute(text(sql), {"org": org, **params})
 
 
-async def hold_domain(o: Orgs, org: str, suffix: str) -> None:
+async def hold_domain(
+    o: Orgs, org: str, suffix: str, state: str = "pending_dns", *, delegated: bool = False
+) -> None:
     await hold(
         o,
         org,
-        "insert into ssc.org_domain (id, org_id, suffix, zone_name) "
-        "values (:id, :org, :suffix, :zone)",
+        "insert into ssc.org_domain (id, org_id, suffix, zone_name, state, last_delegated_at) "
+        "values (:id, :org, :suffix, :zone, :state, case when :delegated then now() end)",
         id=new_id("dom"),
         suffix=suffix,
-        zone=f"ssc-d-{secrets.token_hex(6)}",
+        zone=resource_name(suffix),
+        state=state,
+        delegated=delegated,
     )
 
 
@@ -131,6 +137,30 @@ async def test_another_org_s_requested_domain_is_refused_above_and_below(o: Orgs
     assert await admitted(o, asked) is None
     assert await admitted(o, o.base) == HELD
     assert await admitted(o, f"eu.{asked}") == HELD
+
+
+@pytest.mark.parametrize("state", ["failed", "retired"])
+async def test_a_name_another_org_never_delegated_is_free_once_it_failed_or_retired(
+    o: Orgs, state: str
+) -> None:
+    asked = f"tools.{o.base}"
+    await hold_domain(o, o.theirs, asked, state)
+    assert await admitted(o, asked) is None
+    assert await admitted(o, o.base) is None
+    assert await admitted(o, f"eu.{asked}") is None
+    await hold_domain(o, o.mine, asked)
+
+
+@pytest.mark.parametrize("state", ["failed", "retired"])
+async def test_a_name_another_org_delegated_stays_held_after_it_failed_or_retired(
+    o: Orgs, state: str
+) -> None:
+    asked = f"tools.{o.base}"
+    await hold_domain(o, o.theirs, asked, state, delegated=True)
+    assert await admitted(o, o.base) == HELD
+    assert await admitted(o, f"eu.{asked}") == HELD
+    with pytest.raises(IntegrityError, match="org_domain_suffix_key"):
+        await hold_domain(o, o.mine, asked)
 
 
 async def test_the_check_holds_one_lock_until_the_caller_commits(o: Orgs) -> None:

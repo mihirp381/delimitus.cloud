@@ -1,8 +1,9 @@
 """Whether an org may ask for a customer suffix (CD-4.2, CD-5.3).
 
 Overlap with other orgs is checked under one advisory lock, class :data:`LOCK_CLASS` key 0,
-held to the end of the caller's transaction, so two orgs cannot both pass and then insert. A
-suffix equal to another org's ``org_domain`` row is left to that table's unique index."""
+held to the end of the caller's transaction, so two orgs cannot both pass and then insert. Another
+org's ``org_domain`` row holds its name while it is live or once it was ever delegated; a suffix
+equal to one is left to that table's partial unique index."""
 
 from typing import Final
 
@@ -27,7 +28,8 @@ _USED = text(
 _HELD = text(
     "select apps_suffix, false from ssc.org where id = :org and apps_suffix is not null "
     "union all select suffix, false from ssc.org_suffix_retired where org_id = :org "
-    "union all select suffix, true from ssc.org_domain where org_id = :org"
+    "union all select suffix, true from ssc.org_domain where org_id = :org "
+    "and (state not in ('failed', 'retired') or last_delegated_at is not null)"
 )
 
 

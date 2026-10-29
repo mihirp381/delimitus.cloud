@@ -61,7 +61,7 @@ _LOCK = text(
 )
 _RESTART = text(
     "update ssc.org_domain set state = 'pending_dns', failure = null, observed_ns = null, "
-    "name_servers = '{}', certificate = null, provider = :provider, last_delegated_at = null, "
+    "name_servers = '{}', certificate = null, provider = :provider, "
     "stalled_at = null, created_at = now(), updated_at = now(), "
     "retire_after = now() + interval '12 months' "
     "where org_id = :org and id = :id and state = 'failed' returning "

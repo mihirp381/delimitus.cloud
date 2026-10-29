@@ -234,7 +234,11 @@ async def _fresh_row(
     except CellDomainNotFoundError:
         pass
     if failed.suffix == suffix:
-        return await restart_domain(uow.conn, uow.org_id, failed.id, provider=provider)
+        try:
+            async with uow.conn.begin_nested():
+                return await restart_domain(uow.conn, uow.org_id, failed.id, provider=provider)
+        except IntegrityError:
+            raise Refusal(ErrorCode.ALREADY_EXISTS, evidence={"suffix": suffix}) from None
     await update_state(uow.conn, org_id=uow.org_id, domain_id=failed.id, state="retired")
     await uow.audit(
         AuditAction.DOMAIN_RETIRED,

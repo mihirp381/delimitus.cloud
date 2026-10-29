@@ -62,13 +62,14 @@ async def recheck(
 async def retire(
     conn: AsyncConnection, agent: CellDomains, row: OrgDomain, actor: Actor, now: datetime
 ) -> OrgDomain:
-    """Empty the zone through the agent, keep the suffix from reuse and mark the row retired,
-    in ``conn``'s org-bound transaction."""
+    """Empty the zone through the agent, keep a suffix that was ever delegated from reuse and
+    mark the row retired, in ``conn``'s org-bound transaction."""
     refused = retire_allowed(row, now=now)
     if refused is not None:
         raise RetireRefusedError(refused)
     await agent.retire(row.suffix)
-    await conn.execute(_KEEP_SUFFIX, {"org": row.org_id, "suffix": row.suffix, "until": now})
+    if row.last_delegated_at is not None:
+        await conn.execute(_KEEP_SUFFIX, {"org": row.org_id, "suffix": row.suffix, "until": now})
     retired = await update_state(conn, org_id=row.org_id, domain_id=row.id, state="retired")
     await append_event(
         conn,

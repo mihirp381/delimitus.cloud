@@ -30,6 +30,7 @@ from test_cell_resources import jobs
 from test_deploy import Bench, build_release, deploy, execute, get, rows_of
 from test_domains_tick import resolvers
 
+from ssc_contracts.domains import resource_name
 from ssc_contracts.errors import ErrorCode
 from ssc_contracts.ids import new_id
 from ssc_control.api.idempotency import IDEMPOTENCY_HEADER
@@ -290,6 +291,44 @@ async def test_a_suffix_another_org_holds_already_exists(b: Bench, rival: str) -
     assert_problem(put(b, f"eu.{name(b)}", b.t.admin), ErrorCode.DOMAIN_SUFFIX_HELD)
     assert rows_of(b.dsn, b.w.org, "select id from ssc.org_domain") == []
     assert domain_audit(b) == []
+
+
+async def test_a_name_another_org_asked_for_and_never_delegated_is_free_once_it_failed(
+    b: Bench, rival: str
+) -> None:
+    cell(b)
+    execute(
+        b.dsn,
+        rival,
+        "insert into ssc.org_domain (id, org_id, suffix, zone_name, state) "
+        "values (%s, %s, %s, %s, 'failed')",
+        new_id("dom"),
+        rival,
+        name(b),
+        resource_name(name(b)),
+    )
+    r = put(b, name(b), b.t.admin)
+    assert r.status_code == 200, r.text
+    assert r.json()["delegation"]["state"] == "pending_dns"
+
+
+async def test_a_failed_name_asked_again_after_another_org_took_it_already_exists(
+    b: Bench, rival: str
+) -> None:
+    cell(b)
+    put(b, name(b), b.t.admin)
+    set_state(b, "failed")
+    execute(
+        b.dsn,
+        rival,
+        "insert into ssc.org_domain (id, org_id, suffix, zone_name) values (%s, %s, %s, %s)",
+        new_id("dom"),
+        rival,
+        name(b),
+        resource_name(name(b)),
+    )
+    assert_problem(put(b, name(b), b.t.admin), ErrorCode.ALREADY_EXISTS)
+    assert rows_of(b.dsn, b.w.org, "select state from ssc.org_domain") == [{"state": "failed"}]
 
 
 async def test_a_cell_without_the_domains_port_is_unavailable(b: Bench) -> None:

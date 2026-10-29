@@ -333,3 +333,24 @@ async def test_a_domain_row_is_kept_and_retired_once_its_delegation_is_gone(
             assert (await domain_of(conn, org)) == again
     finally:
         await engine.dispose()
+
+
+async def test_a_domain_never_delegated_is_retired_without_keeping_its_name(
+    dsns: Dsns, org: str
+) -> None:
+    engine = make_engine(dsns.app)
+    suffix = f"tools.{org[4:]}.com"
+    try:
+        async with bound_org(engine, org) as conn:
+            row = await insert_domain(
+                conn, org_id=org, suffix=suffix, zone_name=resource_name(suffix)
+            )
+            gone = {k: [] for k in DOH_ENDPOINTS}
+            row = await update_state(
+                conn, org_id=org, domain_id=row.id, state="failed", observed_ns=gone
+            )
+            done = await retire(conn, FakeCellDomains(), row, OPERATOR, datetime.now(UTC))
+            assert done.state == "retired"
+        assert rows(dsns.app, org, "select suffix from ssc.org_suffix_retired") == []
+    finally:
+        await engine.dispose()

@@ -2,10 +2,10 @@
 CREATE TABLE ssc.org_domain (
   id                text PRIMARY KEY CHECK (id ~ '^dom_[a-z0-9]{20}$'),
   org_id            text NOT NULL REFERENCES ssc.org (id),
-  suffix            text NOT NULL UNIQUE CHECK (
+  suffix            text NOT NULL CHECK (
     suffix ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?){2,}$'
     AND length(suffix) <= 203),
-  zone_name         text NOT NULL UNIQUE CHECK (zone_name ~ '^ssc-d-[0-9a-f]{12}$'),
+  zone_name         text NOT NULL CHECK (zone_name ~ '^ssc-d-[0-9a-f]{12}$'),
   name_servers      text[] NOT NULL DEFAULT '{}' CHECK (cardinality(name_servers) <= 16),
   state             text NOT NULL DEFAULT 'pending_dns' CHECK (state IN (
     'pending_dns', 'issuing', 'active', 'failed', 'retiring', 'retired')),
@@ -20,6 +20,12 @@ CREATE TABLE ssc.org_domain (
 );
 
 CREATE UNIQUE INDEX org_domain_one_live ON ssc.org_domain (org_id) WHERE state <> 'retired';
+-- A name is held while its row is live or once it was ever delegated; a request that never was
+-- gives it up when it fails or is retired.
+CREATE UNIQUE INDEX org_domain_suffix_key ON ssc.org_domain (suffix)
+  WHERE state NOT IN ('failed', 'retired') OR last_delegated_at IS NOT NULL;
+CREATE UNIQUE INDEX org_domain_zone_name_key ON ssc.org_domain (zone_name)
+  WHERE state NOT IN ('failed', 'retired') OR last_delegated_at IS NOT NULL;
 CREATE INDEX org_domain_state ON ssc.org_domain (org_id, state);
 
 CREATE TRIGGER org_domain_refuse_truncate

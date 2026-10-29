@@ -27,7 +27,9 @@ feature is built and tested locally and has not yet been run against a live doma
 - Refused names, each with its own reason: fewer than three labels, a public suffix or your
   registered domain itself, any name under `delimitus.com` or `delimitusapps.com`, a name your
   organization already uses or used, and a name equal to, above or below one another
-  organization uses, used or delegated. [ssc_control domains/admission.py]
+  organization uses, used or delegated. Asking for a name does not reserve it: a request that
+  failed or was retired without ever being delegated leaves the name free for any organization.
+  [ssc_control domains/admission.py]
 
 ## Mail
 
@@ -81,7 +83,7 @@ feature is built and tested locally and has not yet been run against a live doma
   but NS and SOA are deleted) and keeps the zone itself; an operator deletes it by hand after the
   12 months. Remove the NS records at your parent when you leave: once the zone is deleted, a
   delegation left in place is yours to clear.
-- The name is never given to anyone else: a retired subdomain is kept on record for your
-  organization (`ssc.org_suffix_retired`, its time set to the retire) and no other organization
+- A delegated name is never given to anyone else: a retired subdomain that was ever delegated is
+  kept on record for your organization (`ssc.org_suffix_retired`, its time set to the retire) and no other organization
   may ask for it, a name above it or a name below it. Any future clean-up of that table must keep
   those rows. [packages/ssc_control db/README.md, revision 0046]
