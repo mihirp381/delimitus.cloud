@@ -1,7 +1,6 @@
 """Moving an org's apps to its customer suffix and back (CD-4.2), in one transaction: the
 suffix that was current stays recognised for 30 days as a previous one."""
 
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Final, Literal
@@ -18,7 +17,7 @@ from ssc_control.snapshot.service import mark_dirty
 type FlipTo = Literal["customer", "default"]
 PREVIOUS_FOR: Final = timedelta(days=30)
 
-_LOCK_ORG = text("select cell_label, apps_suffix from ssc.org where id = :org for update")
+_LOCK_ORG = text("select cell_label, apps_suffix from ssc.org where id = :org for no key update")
 _SET_SUFFIX = text("update ssc.org set apps_suffix = :suffix where id = :org")
 _FORGET = text("delete from ssc.org_suffix_retired where org_id = :org and suffix = :suffix")
 _KEEP = text(
@@ -48,10 +47,12 @@ async def flip(  # noqa: PLR0913
     now: datetime,
     *,
     apps_domain: str,
-    rolling: Callable[[], Awaitable[int]],
+    rolling: int,
+    counted_for: str | None,
 ) -> Flipped:
-    """``rolling`` counts the environments not yet rolled for the coming suffix; it is called
-    with the org row locked, so a deploy that starts before the lock is counted."""
+    """``rolling`` is the count, made before the org row is locked, of environments not yet
+    rolled for ``counted_for``; under the lock the flip goes ahead only if the suffix it moves
+    to is still that one."""
     org = (await conn.execute(_LOCK_ORG, {"org": org_id})).one()
     if org.cell_label is None:
         raise FlipRefusedError("state", "the organization has no cell")
@@ -68,8 +69,10 @@ async def flip(  # noqa: PLR0913
         if org.apps_suffix is None:
             raise FlipRefusedError("state", "the organization already uses its default suffix")
         coming, column = default, None
-    if pending := await rolling():
-        raise FlipRefusedError("not_ready", "apps are still rolling", pending)
+    if coming != counted_for:
+        raise FlipRefusedError("not_ready", "the domain changed while apps were counted")
+    if rolling:
+        raise FlipRefusedError("not_ready", "apps are still rolling", rolling)
     await conn.execute(_FORGET, {"org": org_id, "suffix": coming})
     await conn.execute(_FORGET, {"org": org_id, "suffix": current})
     await conn.execute(_SET_SUFFIX, {"org": org_id, "suffix": column})

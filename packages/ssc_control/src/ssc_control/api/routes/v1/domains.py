@@ -30,7 +30,7 @@ from ssc_control.db.domains import (
 from ssc_control.domains.admission import admit
 from ssc_control.domains.flip import FlipRefusedError, flip
 from ssc_control.domains.provider import parent_provider
-from ssc_control.domains.view import DomainView, NoCellLabelError, rolling_for, view_of
+from ssc_control.domains.view import DomainView, NoCellLabelError, live_count, rolling_for, view_of
 from ssc_control.runtime.cell_domains import (
     CellDomainNotFoundError,
     CellDomains,
@@ -133,9 +133,10 @@ async def _rolling(request: Request, uow: UnitOfWork, view: DomainView) -> int:
     return await rolling_for(uow.conn, rt.engine, cell, rt.release_specs, view, org_id=uow.org_id)
 
 
-async def domain_out(request: Request, uow: UnitOfWork) -> DomainOut:
+async def domain_out(request: Request, uow: UnitOfWork, rolling: int | None = None) -> DomainOut:
     view = await _view(request, uow)
-    rolling = await _rolling(request, uow, view)
+    if rolling is None:
+        rolling = await _rolling(request, uow, view)
     return DomainOut(
         default_suffix=view.default_suffix,
         current_suffix=view.current_suffix,
@@ -278,12 +279,9 @@ async def flip_domain(request: Request, body: FlipIn, uow: UserUoW) -> Response:
     (``DOMAIN_NOT_READY`` until then). The suffix left stays a previous one for 30 days: its
     hosts redirect. One snapshot carries the change. Audited as ``domain.flipped``."""
     await _change(uow)
-    await _view(request, uow)
-
-    async def rolling() -> int:
-        view = await _view(request, uow)
-        return await _rolling(request, uow, view) if view.next_flip == body.to else 0
-
+    view = await _view(request, uow)
+    counted_for = view.coming_suffix if view.next_flip == body.to else None
+    rolling = await _rolling(request, uow, view) if counted_for is not None else 0
     try:
         await flip(
             uow.conn,
@@ -293,8 +291,9 @@ async def flip_domain(request: Request, body: FlipIn, uow: UserUoW) -> Response:
             datetime.now(UTC),
             apps_domain=runtime_of(request).settings.apps_domain,
             rolling=rolling,
+            counted_for=counted_for,
         )
     except FlipRefusedError as exc:
         code = ErrorCode.DOMAIN_NOT_READY if exc.reason == "not_ready" else ErrorCode.DOMAIN_STATE
         raise Refusal(code, evidence={"reason": str(exc), "rolling": exc.rolling}) from None
-    return uow.reply(await domain_out(request, uow))
+    return uow.reply(await domain_out(request, uow, await live_count(uow.conn, uow.org_id)))

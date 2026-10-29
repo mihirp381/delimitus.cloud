@@ -97,9 +97,13 @@ async def rolling_for(  # noqa: PLR0913
         previous_suffixes=await suffix_list(conn, org_id, view.apps_suffix),
     )
     if view.coming_suffix not in identity_suffixes(identity):
-        live = await conn.execute(reconciler.LIVE_ENVS, {"org": org_id})
-        return len(live.scalars().all())
+        return await live_count(conn, org_id)
     return await reconciler.rolling(engine, cell.runtime, specs, org_id=org_id, identity=identity)
 
 
-__all__ = ["DomainView", "NoCellLabelError", "rolling_for", "view_of"]
+async def live_count(conn: AsyncConnection, org_id: str) -> int:
+    """Right after a flip every live environment rolls: its suffixes changed."""
+    return len((await conn.execute(reconciler.LIVE_ENVS, {"org": org_id})).scalars().all())
+
+
+__all__ = ["DomainView", "NoCellLabelError", "live_count", "rolling_for", "view_of"]

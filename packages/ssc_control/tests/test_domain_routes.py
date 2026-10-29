@@ -4,15 +4,16 @@ postgres:18, the fake runtime and the fake cell agent."""
 from __future__ import annotations
 
 import secrets
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
+import psycopg
 import pytest
 import test_deploy
 from fastapi import FastAPI
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine
 from ssc_testkit import (
     Dsns,
@@ -375,28 +376,40 @@ async def test_the_flip_waits_for_every_app_to_roll_and_moves_them_both_ways(b: 
     ]
 
 
-async def test_the_flip_counts_rolling_apps_under_the_org_lock(
+async def test_the_flip_counts_rolling_apps_before_it_locks_the_org(
     b: Bench, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def rolling(_c: Any, engine: AsyncEngine, *_a: Any, org_id: str) -> int:
         async with bound_org(engine, org_id) as other:
-            try:
-                await other.execute(
-                    text("select 1 from ssc.org where id = :org for no key update nowait"),
-                    {"org": org_id},
-                )
-            except DBAPIError:
-                return 1
+            await other.execute(
+                text("select 1 from ssc.org where id = :org for no key update nowait"),
+                {"org": org_id},
+            )
         return 0
 
     monkeypatch.setattr(domain_routes, "rolling_for", rolling)
     cell(b)
     put(b, name(b), b.t.admin)
     set_state(b, "active")
-    assert get(b, "/v1/domain", b.t.admin).json()["rolling"] == 0
-    refused = flip(b, "customer", b.t.admin)
-    assert_problem(refused, ErrorCode.DOMAIN_NOT_READY)
-    assert rows_of(b.dsn, b.w.org, "select apps_suffix from ssc.org")[0]["apps_suffix"] is None
+    r = flip(b, "customer", b.t.admin)
+    assert r.status_code == 200, r.text
+    assert rows_of(b.dsn, b.w.org, "select apps_suffix from ssc.org")[0]["apps_suffix"] == name(b)
+
+
+async def test_two_flips_wait_for_the_org_lock_without_deadlocking(b: Bench, dsns: Dsns) -> None:
+    cell(b)
+    put(b, name(b), b.t.admin)
+    set_state(b, "active")
+    with ThreadPoolExecutor(2) as pool:
+        with psycopg.connect(dsns.superuser) as held:
+            held.execute("select 1 from ssc.org where id = %s for no key update", (b.w.org,))
+            calls = [pool.submit(flip, b, "customer", b.t.admin) for _ in range(2)]
+            done, _ = wait(calls, timeout=1)
+            assert not done
+        answers = sorted(call.result(timeout=10).status_code for call in calls)
+    assert answers == [200, 409]
+    flipped = [a for a in domain_audit(b) if a["action"] == "domain.flipped"]
+    assert len(flipped) == 1
 
 
 # ── operator retire ──────────────────────────────────────────────────────────
