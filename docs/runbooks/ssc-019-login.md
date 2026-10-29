@@ -233,9 +233,10 @@ company pilot, offer Google sign-in first.
 When the person who leaves owns apps (not live yet, decision 019 amendment 2026-10-29), each of
 those apps has no owner: it keeps opening while the org has an active admin, and every active
 admin gets one mail, "<app> has no owner. Assign one." An admin assigns the new owner in the
-console: the app's Settings, Assign owner, picking an active person from the list. If the org
-has no active admin left either, those apps are turned off, preview and production, with the
-page "This app needs a named owner" until an admin is restored
+console: the app's Settings, Assign owner, picking an active person from the list. A social org
+cannot lose its last admin, so its apps stay open. Only in an org on directory sync, when the
+sync has also deactivated every admin, are those apps turned off, preview and production, with
+the page "This app needs a named owner" until an admin is restored
 (`docs/runbooks/ssc-097-restore-admin.md`) and assigns an owner.
 
 ### WorkOS setup **[real]**
