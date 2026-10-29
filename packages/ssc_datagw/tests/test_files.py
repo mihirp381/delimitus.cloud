@@ -45,7 +45,13 @@ from google.auth import crypt
 
 from ssc_datagw.admission import RECHECK_SECONDS, OnDemandSnapshot
 from ssc_datagw.files import LINK_SECONDS, MAX_FILE_BYTES, FileBroker
-from ssc_datagw.server import DataGateway, create_app, production_app
+from ssc_datagw.server import (
+    ERRORS,
+    OWNER_NEEDED_MESSAGE,
+    DataGateway,
+    create_app,
+    production_app,
+)
 from ssc_datagw.workload import GoogleWorkloads
 from ssc_shared.access import ViewHolder
 from ssc_shared.blobstore_fs import FsBlobStore
@@ -56,7 +62,11 @@ BUCKET = SETTINGS.bucket
 STORAGE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 PNG = b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 40
 HTML = b"<!doctype html><script>alert(document.cookie)</script>"
-KILLS = {"a disabled app": "disabled", "a quarantined app": "quarantined"}
+KILLS = {
+    "a disabled app": "disabled",
+    "a quarantined app": "quarantined",
+    "an app that needs an owner": "owner_needed",
+}
 
 
 class Clock:
@@ -343,6 +353,10 @@ async def test_done_when_a_disabled_app_cannot_obtain_links(
         403,
         "APP_NOT_ACTIVE",
         "admin",
+    )
+    owner_needed = KILLS[case] == "owner_needed"
+    assert error(r)["message"] == (
+        OWNER_NEEDED_MESSAGE if owner_needed else ERRORS["APP_NOT_ACTIVE"].message
     )
 
 
