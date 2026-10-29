@@ -86,6 +86,9 @@ class World:
         self.platform: dict[str, object] = {"control_public_stage": "prod"}
         self.keys: dict[str, bytes] = {}
         self.published: list[tuple[tuple[str, ...], str, int]] = []
+        self.zones: Done = Done(0, b"[]", "")
+        self.records: dict[str, list[str]] = {}
+        self.delegated: dict[str, Done] = {}
         self.tmp_path = tmp_path
 
     def clock(self) -> float:
@@ -206,6 +209,13 @@ class World:
             mode = stat.S_IMODE(source.stat().st_mode)
             self.published.append((argv, source.read_text(), mode))
             self.keys[argv[-1]] = source.read_bytes()
+        if argv[:4] == ("gcloud", "dns", "managed-zones", "list"):
+            return self.zones
+        if argv[:4] == ("gcloud", "dns", "record-sets", "list"):
+            zone = argv[4].removeprefix("--zone=")
+            return Done(0, "\n".join(self.records[zone]).encode(), "")
+        if argv[0] == "dig":
+            return self.delegated.get(argv[-1].removeprefix("@"), Done(0, b"", ""))
         if argv[-1] == "ssc_conformance.nightly":
             return Done(self.probe_code, b"floor probes: 12 passed\n", "")
         return Done(0, b"", "")
@@ -1154,6 +1164,60 @@ def test_destroy_of_a_cell_still_in_the_local_folder_runs_there(world: World) ->
     assert world.out[-1] == RETIRE
 
 
+OUR_NS = ["ns-cloud-a1.googledomains.com.", "ns-cloud-a2.googledomains.com."]
+
+
+def have_zone(world: World, *kinds: str) -> None:
+    world.bucket = {STACK: len(URNS)}
+    zone = {"name": "ssc-d-0123456789ab", "dnsName": "apps.testorg.com.", "nameServers": OUR_NS}
+    world.zones = Done(0, json.dumps([zone]).encode(), "")
+    world.records = {"ssc-d-0123456789ab": ["NS", "SOA", *kinds]}
+
+
+def test_destroy_goes_on_once_the_customer_zone_is_retired_and_undelegated(world: World) -> None:
+    have_zone(world)
+    world.delegated["8.8.8.8"] = Done(0, b"ns1.registrar.example.\n", "")
+    assert world.destroy() == 0
+    assert DESTROY in world.bucket_calls()
+    asked = [c[-1] for c in world.shell_calls if c[0] == "dig"]
+    assert asked == ["@1.1.1.1", "@8.8.8.8", "@9.9.9.9"]
+    assert "      apps.testorg.com: retired and no longer delegated" in world.out
+
+
+@pytest.mark.parametrize(
+    ("kinds", "delegated", "said"),
+    [
+        (("A", "CAA"), {}, "apps.testorg.com is not retired: undelegate it at the parent"),
+        ((), {"9.9.9.9": Done(0, OUR_NS[1].upper().encode(), "")}, "9.9.9.9 still sees"),
+        ((), {"1.1.1.1": Done(9, b"", "timed out")}, "1.1.1.1 did not answer"),
+    ],
+)
+def test_destroy_refuses_while_the_customer_zone_is_live_or_delegated(
+    world: World, kinds: tuple[str, ...], delegated: dict[str, Done], said: str
+) -> None:
+    have_zone(world, *kinds)
+    world.delegated = delegated
+    assert world.destroy() == 1
+    assert said in world.err[0]
+    assert world.err[0].endswith("nothing was destroyed")
+    assert not any(c[0] == "destroy" for c in world.pulumi_calls)
+
+
+def test_destroy_of_a_cell_with_cloud_dns_off_has_no_zone_to_check(world: World) -> None:
+    world.bucket = {STACK: len(URNS)}
+    world.zones = Done(1, b"", "ERROR: (gcloud.dns.managed-zones.list) SERVICE_DISABLED")
+    assert world.destroy() == 0
+    assert not any(c[0] == "dig" for c in world.shell_calls)
+
+
+def test_destroy_refuses_when_the_zones_cannot_be_listed(world: World) -> None:
+    world.bucket = {STACK: len(URNS)}
+    world.zones = Done(1, b"", "ERROR: PERMISSION_DENIED")
+    assert world.destroy() == 1
+    assert "gcloud dns managed-zones failed" in world.err[0]
+    assert not any(c[0] == "destroy" for c in world.pulumi_calls)
+
+
 def test_destroy_refuses_a_stack_that_does_not_exist(world: World) -> None:
     assert world.destroy() == 1
     assert f"there is no stack {STACK}" in world.err[0]
@@ -1227,4 +1291,6 @@ def test_the_destroy_dry_run_prints_the_plan_and_runs_nothing(world: World) -> N
     assert f"$ pulumi destroy --stack {STACK} --yes --non-interactive" in text
     assert f"$ pulumi stack rm --stack {STACK} --yes --non-interactive" in text
     assert "$ gcloud storage rm 'gs://ssc-control-<control_public_stage>-keys/" in text
+    assert f"$ gcloud dns managed-zones list --project={PROJECT} '--filter=name~^ssc-d-'" in text
+    assert "$ dig +short +time=5 +tries=2 NS '<dnsName>' @9.9.9.9" in text
     assert world.out[-1] == RETIRE

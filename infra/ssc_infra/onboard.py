@@ -15,7 +15,8 @@ Each step is idempotent. ``--resume`` continues a stack that exists, skipping a 
 is visibly done; ``--from-step N`` starts at step N (and implies ``--resume``). A failed step
 prints its time and the command to resume. ``--dry-run`` prints the plan with the exact commands
 and runs none. The labels of the live proof run's cells are always refused. ``--destroy`` destroys
-and removes an abandoned cell's stack, from the backend that holds it, and its public keys.
+and removes an abandoned cell's stack, from the backend that holds it, and its public keys; it
+refuses while a customer domain zone in the cell is not retired or is still delegated.
 
 State lives in a local file backend, ``~/.ssc/onboard/<label>/`` (mode 0700), until the last step:
 Pulumi rewrites the whole checkpoint after every resource, and in the bucket that took 78 minutes
@@ -50,6 +51,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final, Protocol, cast
 
+from ssc_contracts.domains import RESOURCE_PREFIX
 from ssc_infra import account
 from ssc_infra import naming as n
 from ssc_infra.cell import APP_IMAGE, CUSTOMER_ORG
@@ -563,6 +565,45 @@ def keys_rm(url: str) -> list[str]:
     return ["gcloud", "storage", "rm", url]
 
 
+RESOLVERS: Final = ("1.1.1.1", "8.8.8.8", "9.9.9.9")
+NO_DNS: Final = ("SERVICE_DISABLED", "has not been used", "NOT_FOUND", "was not found")
+ZONE_RECORDS: Final = frozenset({"NS", "SOA"})
+
+
+def domain_zones(project: str) -> list[str]:
+    return [
+        "gcloud",
+        "dns",
+        "managed-zones",
+        "list",
+        f"--project={project}",
+        f"--filter=name~^{RESOURCE_PREFIX}",
+        "--format=json",
+        "--quiet",
+    ]
+
+
+def zone_records(project: str, zone: str) -> list[str]:
+    return [
+        "gcloud",
+        "dns",
+        "record-sets",
+        "list",
+        f"--zone={zone}",
+        f"--project={project}",
+        "--format=value(type)",
+        "--quiet",
+    ]
+
+
+def delegation(name: str, resolver: str) -> list[str]:
+    return ["dig", "+short", "+time=5", "+tries=2", "NS", name, f"@{resolver}"]
+
+
+def _hosts(lines: Iterable[str]) -> set[str]:
+    return {h.strip().rstrip(".").lower() for h in lines if h.strip()}
+
+
 def destroy_args(stack: str) -> tuple[tuple[str, ...], ...]:
     return (("destroy", "--stack", stack, "--yes"), ("stack", "rm", "--stack", stack, "--yes"))
 
@@ -824,6 +865,7 @@ class Onboarding:
         t.out(f"destroying {opts.stack} (project {opts.project})")
         try:
             bucket = self._destroy_backend()
+            self._no_live_domain()
             t.out(f"backend: {t.bucket_url if bucket else f'file://{self.folder}'}")
             for args in destroy_args(opts.stack):
                 t.out(f"      $ {pulumi_line(args)}")
@@ -850,6 +892,41 @@ class Onboarding:
         if not (local or in_bucket):
             raise OnboardError(f"there is no stack {opts.stack} in {folder} or {bucket}")
         return in_bucket
+
+    def _no_live_domain(self) -> None:
+        """A cell whose customer zone is not emptied, or still delegated, keeps its project: a
+        parent NS record left on a deleted zone lets anyone recreate it (decision 004)."""
+        project = self.opts.project
+        found = self.t.shell(domain_zones(project))
+        if found.code:
+            if any(m in found.err for m in NO_DNS):
+                return
+            raise CommandError(f"gcloud dns managed-zones failed: {found.err.strip()[-1000:]}")
+        try:
+            zones: Any = json.loads(found.out or b"[]")
+        except ValueError as exc:
+            raise OnboardError("gcloud dns managed-zones list did not print JSON") from exc
+        for zone in zones:
+            name = str(zone["dnsName"]).rstrip(".")
+            listed = self._sh(zone_records(project, zone["name"])).out.decode().split()
+            if set(listed) - ZONE_RECORDS:
+                raise OnboardError(
+                    f"{name} is not retired: undelegate it at the parent and retire it "
+                    "(POST /internal/v1/orgs/{org_id}/domain/retire) first; nothing was destroyed"
+                )
+            ours = _hosts(zone.get("nameServers", []))
+            for resolver in RESOLVERS:
+                seen = self.t.shell(delegation(name, resolver))
+                if seen.code:
+                    raise OnboardError(
+                        f"{resolver} did not answer for {name}; nothing was destroyed"
+                    )
+                if _hosts(seen.out.decode().splitlines()) & ours:
+                    raise OnboardError(
+                        f"{resolver} still sees {name} delegated to its zone: remove the NS "
+                        "records at the parent first; nothing was destroyed"
+                    )
+            self.t.out(f"      {name}: retired and no longer delegated")
 
     def _remove_keys(self) -> None:
         try:
@@ -1175,6 +1252,10 @@ def destroy_plan(opts: Options) -> list[str]:
         f"      $ {pulumi_line(('stack', 'ls', '--json'))}  [file://{folder}] (when it exists)",
         f"      $ {pulumi_line(('stack', 'ls', '--json'))}  [{bucket_url}]",
         f"backend: the one that holds {opts.stack}; both or neither is refused",
+        f"      $ {shlex.join(domain_zones(opts.project))}",
+        f"      $ {shlex.join(zone_records(opts.project, '<zone>'))}  (each zone)",
+        *(f"      $ {shlex.join(delegation('<dnsName>', r))}" for r in RESOLVERS),
+        "refused while a zone has records beyond NS and SOA or a resolver names its servers",
         *(f"      $ {pulumi_line(args)}" for args in destroy_args(opts.stack)),
         f"      $ {pulumi_line(('stack', 'output', '--stack', n.PLATFORM_STACK, '--json'))}"
         f"  [{bucket_url}] (control_public_stage names the keys bucket)",
