@@ -395,6 +395,7 @@ async def restore_admin(  # noqa: PLR0912, PLR0913, C901  (keyword-only; one lis
                 "applied_via": "sql",
             },
         )
+        await mark_dirty(conn, org_id)
         return Restored(user_id, role, status, True, tuple(warnings))
     await conn.execute(_RESTORE, {"org": org_id, "id": user_id})
     await _audit(

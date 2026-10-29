@@ -34,6 +34,7 @@ from ssc_control.identity import __main__ as cli
 from ssc_control.identity import connections, operator, sync
 from ssc_control.identity.connections import ConnectError
 from ssc_control.identity.rules import JoinRule
+from ssc_control.snapshot.service import COMPILE_TASK
 from ssc_shared import redaction
 
 OP = Actor(kind=ActorKind.OPERATOR, id="op_dana")
@@ -108,6 +109,25 @@ def counts(dsns: Dsns, name: str, directory: str) -> tuple[int, int, int]:
     assert links is not None
     assert events is not None
     return int(orgs[0]), int(links[0]), int(events[0])
+
+
+def compiles(dsns: Dsns, org: str, *, drain: bool = False) -> int:
+    """The org's queued snapshot compiles; ``drain`` deletes them first."""
+    with psycopg.connect(dsns.superuser, autocommit=True) as conn:
+        conn.execute("set search_path = procrastinate, public")
+        args = (COMPILE_TASK, org)
+        if drain:
+            conn.execute(
+                "delete from procrastinate_jobs where task_name = %s and args->>'org_id' = %s",
+                args,
+            )
+        row = conn.execute(
+            "select count(*) from procrastinate_jobs where task_name = %s "
+            "and args->>'org_id' = %s and status = 'todo'",
+            args,
+        ).fetchone()
+    assert row is not None
+    return int(row[0])
 
 
 async def events_of(engine: AsyncEngine, org: str) -> list[Any]:
@@ -521,6 +541,7 @@ async def test_an_already_applied_change_is_recorded_once_without_touching_the_r
         )
         row_before = await w.rows("select * from ssc.user_account where id = :id", id=w.founder)
         before = await events_of(w.engine, w.org)
+        compiles(dsns, w.org, drain=True)
         done = await restore(
             w,
             w.founder,
@@ -543,6 +564,7 @@ async def test_an_already_applied_change_is_recorded_once_without_touching_the_r
             "applied_via": "sql",
         }
         assert await chain_ok(w.engine, w.org) == len(before) + 1
+        assert compiles(dsns, w.org) == 1  # the founder's apps are served again
         # the same change twice, no offset, and the future are all refused
         with pytest.raises(operator.RestoreError, match="already recorded"):
             await restore(w, w.founder, already_applied_at=applied)
