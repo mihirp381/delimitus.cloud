@@ -341,7 +341,7 @@ failed). Each admission rule refuses with its own code, whose `detail` says why:
 domain registered directly under one), `DOMAIN_SUFFIX_RESERVED` (under `delimitus.com`,
 `delimitusapps.com` or the apps domain), `DOMAIN_SUFFIX_HELD` (another org's current or previous
 suffix, or above or below one) and `DOMAIN_SUFFIX_OWN` (the org's own current suffix, or one it
-gave up); `VALIDATION_FAILED` is kept for a name that is not a lower-case DNS name. `POST /v1/domain/flip` `{to: "customer" | "default", confirm: true}` moves the org's
+gave up or had delegated); `VALIDATION_FAILED` is kept for a name that is not a lower-case DNS name. `POST /v1/domain/flip` `{to: "customer" | "default", confirm: true}` moves the org's
 suffix in one snapshot and keeps the old one 30 days as a previous suffix, whose hosts answer
 `307` to the same label under the current one; `DOMAIN_NOT_READY` while apps roll, `DOMAIN_STATE` when there is
 nothing to flip to. Changes are refused in an agent session. An operator retires a domain with

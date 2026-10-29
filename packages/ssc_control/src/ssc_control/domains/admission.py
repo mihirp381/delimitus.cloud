@@ -23,7 +23,8 @@ _LOCK = text("select pg_advisory_xact_lock(:cls, 0)")
 _ORG = text("select cell_label, apps_suffix from ssc.org where id = :org")
 _USED = text(
     "select 1 from ssc.org_suffix_retired where org_id = :org and suffix = :suffix union all "
-    "select 1 from ssc.org_domain where org_id = :org and suffix = :suffix and state = 'retired'"
+    "select 1 from ssc.org_domain where org_id = :org and suffix = :suffix and state = 'retired' "
+    "and last_delegated_at is not null"
 )
 _HELD = text(
     "select apps_suffix, false from ssc.org where id = :org and apps_suffix is not null "

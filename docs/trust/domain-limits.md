@@ -28,7 +28,8 @@ feature is built and tested locally and has not yet been run against a live doma
   registered domain itself, any name under `delimitus.com` or `delimitusapps.com`, a name your
   organization already uses or used, and a name equal to, above or below one another
   organization uses, used or delegated. Asking for a name does not reserve it: a request that
-  failed or was retired without ever being delegated leaves the name free for any organization.
+  failed or was retired without ever being delegated leaves the name free for any organization,
+  yours included.
   [ssc_control domains/admission.py]
 
 ## Mail

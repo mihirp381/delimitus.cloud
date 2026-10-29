@@ -223,6 +223,19 @@ async def test_admission_refuses_what_cannot_be_the_org_s_suffix(b: Bench) -> No
     assert fake.calls == []
 
 
+async def test_the_org_may_ask_again_for_its_own_name_never_delegated(b: Bench) -> None:
+    cell(b)
+    for suffix in (name(b), name(b, "other")):
+        assert put(b, suffix, b.t.admin).status_code == 200
+        set_state(b, "failed")
+    r = put(b, name(b), b.t.admin)
+    assert r.status_code == 200, r.text
+    assert (r.json()["delegation"]["suffix"], r.json()["delegation"]["state"]) == (
+        name(b),
+        "pending_dns",
+    )
+
+
 # ── asking for a domain ──────────────────────────────────────────────────────
 
 
@@ -302,6 +315,12 @@ async def test_a_failed_domain_is_replaced(b: Bench) -> None:
         "domain.requested",
     ]
     set_state(b, "failed")
+    execute(
+        b.dsn,
+        b.w.org,
+        "update ssc.org_domain set last_delegated_at = now() where suffix = %s",
+        name(b),
+    )
     assert_problem(put(b, name(b), b.t.admin), ErrorCode.DOMAIN_SUFFIX_OWN)
 
 
