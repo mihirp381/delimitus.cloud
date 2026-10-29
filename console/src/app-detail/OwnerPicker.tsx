@@ -17,7 +17,7 @@ interface Props {
 
 /**
  * The org's active people, by name, to pick a new owner from: searched by part of a name or email,
- * a page at a time. A typed `usr_` id is taken as it is; a typed email that is one person's picks them.
+ * a page at a time. A typed `usr_` id is taken as it is; a typed email picks the one active person with it.
  */
 export function OwnerPicker({ current, picked, onPick }: Props) {
   const { api } = useRouteContext({ from: '/_authed' });
@@ -36,7 +36,8 @@ export function OwnerPicker({ current, picked, onPick }: Props) {
     enabled: !isId,
   });
   const people = (list.data?.pages.flatMap((p) => p.users) ?? []).filter((u) => u.id !== current);
-  const exact = q === typed ? people.find((u) => u.email.toLowerCase() === typed.toLowerCase()) : undefined;
+  const sameEmail = q && q === typed ? people.filter((u) => u.email.toLowerCase() === typed.toLowerCase()) : [];
+  const exact = sameEmail.length === 1 && !list.hasNextPage ? sameEmail[0] : undefined;
 
   useEffect(() => {
     if (exact) onPick({ id: exact.id, label: exact.display_name || exact.email });
@@ -72,24 +73,27 @@ export function OwnerPicker({ current, picked, onPick }: Props) {
       ) : people.length === 0 ? (
         <p className="empty">{q ? `No active person matches ${q}.` : 'No other active people.'}</p>
       ) : (
-        <fieldset className="choices">
-          <legend className="visually-hidden">Active people</legend>
-          {people.map((u) => (
-            <label key={u.id} className="check">
-              <input
-                type="radio"
-                name={name}
-                value={u.id}
-                checked={picked?.id === u.id}
-                onChange={() => onPick({ id: u.id, label: u.display_name || u.email })}
-              />
-              <span>
-                {u.display_name || u.email}
-                {u.display_name ? <span className="muted"> · {u.email}</span> : null}
-              </span>
-            </label>
-          ))}
-        </fieldset>
+        <>
+          {sameEmail.length > 1 ? <p className="muted">Several people share this address. Pick one.</p> : null}
+          <fieldset className="choices">
+            <legend className="visually-hidden">Active people</legend>
+            {people.map((u) => (
+              <label key={u.id} className="check">
+                <input
+                  type="radio"
+                  name={name}
+                  value={u.id}
+                  checked={picked?.id === u.id}
+                  onChange={() => onPick({ id: u.id, label: u.display_name || u.email })}
+                />
+                <span>
+                  {u.display_name || u.email}
+                  {u.display_name ? <span className="muted"> · {u.email}</span> : null}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        </>
       )}
       {!isId && list.hasNextPage ? (
         <Button disabled={list.isFetchingNextPage} onClick={() => void list.fetchNextPage()}>

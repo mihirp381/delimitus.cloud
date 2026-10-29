@@ -989,6 +989,42 @@ describe('admin actions', () => {
     expect(api.of('PUT', `${APP_PATH}/owner`)[0]?.body).toEqual({ user_id: PERSON });
   });
 
+  it('leaves a shared email to the radios', async () => {
+    const pat = (id: string, display_name: string) => ({ id, display_name, email: 'pat@example.com', role: 'member', status: 'active' });
+    start(
+      `/apps/${APP_ID}`,
+      page({
+        'GET /v1/users': ({ query }) =>
+          json(200, { users: query.get('q') ? [pat(PERSON, 'Pat'), pat('usr_pppppppppppppppppppp', 'Pat Two')] : [], next_cursor: null }),
+      }),
+      signedIn(),
+    );
+    const admin = await adminPanel();
+    fireEvent.click(await within(admin).findByRole('button', { name: 'Transfer ownership' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Transfer expenses' });
+    fireEvent.change(within(dialog).getByLabelText('New owner'), { target: { value: 'pat@example.com' } });
+    expect(await within(dialog).findByText('Several people share this address. Pick one.')).toBeTruthy();
+    expect(within(dialog).getAllByRole('radio').map((r) => (r as HTMLInputElement).checked)).toEqual([false, false]);
+    expect((within(dialog).getByRole('button', { name: 'Transfer' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('does not pick an email match while more people may follow', async () => {
+    const pat = { id: PERSON, display_name: 'Pat', email: 'pat@example.com', role: 'member', status: 'active' };
+    start(
+      `/apps/${APP_ID}`,
+      page({
+        'GET /v1/users': ({ query }) => json(200, query.get('q') ? { users: [pat], next_cursor: PERSON } : { users: [], next_cursor: null }),
+      }),
+      signedIn(),
+    );
+    const admin = await adminPanel();
+    fireEvent.click(await within(admin).findByRole('button', { name: 'Transfer ownership' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Transfer expenses' });
+    fireEvent.change(within(dialog).getByLabelText('New owner'), { target: { value: 'pat@example.com' } });
+    expect(await within(dialog).findByRole('button', { name: 'Load more people' })).toBeTruthy();
+    expect((within(dialog).getByRole('radio', { name: /Pat/ }) as HTMLInputElement).checked).toBe(false);
+  });
+
   it('reads the app again when a pull is refused', async () => {
     const { api } = start(
       `/apps/${APP_ID}`,
