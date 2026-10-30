@@ -2,14 +2,16 @@
 
 The apex is the same site as ``auth.`` and ``console.``, so the page loads nothing from another
 origin and runs only the code it ships. The content security policy allows exactly the inline
-``<script>`` and ``<style>`` blocks of ``landing/index.html``, by hash, computed here when the page
-is loaded; a page that needs anything else (an attribute on those tags, a ``style=`` attribute,
-an inline event handler) is refused at load, because the browser would refuse it anyway.
+``<script>`` and ``<style>`` blocks of a page (``landing/index.html``, ``landing/privacy.html``),
+by hash, computed here when the page is loaded; a page that needs anything else (an attribute on
+those tags, a ``style=`` attribute, an inline event handler) is refused at load, because the
+browser would refuse it anyway.
 """
 
 import base64
 import hashlib
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -31,6 +33,9 @@ SECURITY_HEADERS: Final = {
 
 SIGN_IN: Final = "https://console.delimitus.com/login"
 """The one link to another origin: a navigation to the console's sign-in, never a load."""
+
+USER_DATA_POLICY: Final = "https://developers.google.com/terms/api-services-user-data-policy"
+"""The privacy page's one link to another origin, which Google's sign-in review asks for."""
 
 PLAIN_CSP: Final = "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 """For every answer that is not the page: it runs nothing and loads nothing."""
@@ -76,8 +81,8 @@ def content_security_policy(html: str) -> str:
     )
 
 
-def check_page(html: str, size: int) -> None:
-    """Refuse a page the policy would break, or that reaches another origin."""
+def check_page(html: str, size: int, links: Iterable[str] = (SIGN_IN,)) -> None:
+    """Refuse a page the policy would break, or that reaches another origin except by ``links``."""
     if size > MAX_PAGE_BYTES:
         raise PageError(f"the page is {size} bytes; the limit is {MAX_PAGE_BYTES}")
     if _TAG_WITH_ATTRIBUTES.search(html):
@@ -87,13 +92,15 @@ def check_page(html: str, size: int) -> None:
         raise PageError("a style= attribute would be blocked by the content security policy")
     if _HANDLER_ATTRIBUTE.search(outside):
         raise PageError("an inline event handler would be blocked by the content security policy")
-    if _EXTERNAL.search(outside.replace(f'href="{SIGN_IN}"', "")):
+    for link in links:
+        outside = outside.replace(f'href="{link}"', "")
+    if _EXTERNAL.search(outside):
         raise PageError("the page links a resource or action on another origin")
 
 
-def load_page(path: Path) -> Page:
+def load_page(path: Path, links: Iterable[str] = (SIGN_IN,)) -> Page:
     body = path.read_bytes()
     html = body.decode("utf-8")
-    check_page(html, len(body))
+    check_page(html, len(body), links)
     etag = '"' + hashlib.sha256(body).hexdigest()[:32] + '"'
     return Page(body=body, etag=etag, csp=content_security_policy(html))

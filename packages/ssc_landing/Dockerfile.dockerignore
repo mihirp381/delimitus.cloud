@@ -5,6 +5,7 @@
 !packages/
 !conformance/pyproject.toml
 !landing/index.html
+!landing/privacy.html
 **/.venv
 **/__pycache__
 **/*.pyc

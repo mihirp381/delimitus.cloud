@@ -11,7 +11,7 @@ from fastapi import FastAPI
 
 from ssc_landing.app import create_app
 from ssc_landing.limits import LOAD_BALANCER_HOPS
-from ssc_landing.page import load_page
+from ssc_landing.page import USER_DATA_POLICY, load_page
 from ssc_landing.store import GcsPilotStore, MemoryPilotStore, PilotStore, bucket_named
 
 DEV_ENVS: Final = frozenset({"dev", "test"})
@@ -24,6 +24,7 @@ class SettingsError(ValueError):
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Settings:
     page: Path
+    privacy: Path
     origin: str
     redirect_hosts: frozenset[str]
     bucket: str | None
@@ -40,6 +41,7 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
     page = env.get("SSC_LANDING_PAGE", "")
     if not page:
         raise SettingsError("SSC_LANDING_PAGE is required")
+    privacy = env.get("SSC_LANDING_PRIVACY_PAGE") or str(Path(page).parent / "privacy.html")
     origin = env.get("SSC_LANDING_ORIGIN", "https://delimitus.com").rstrip("/")
     if environment not in DEV_ENVS and not origin.startswith("https://"):
         raise SettingsError("SSC_LANDING_ORIGIN must be https outside dev and test")
@@ -51,6 +53,7 @@ def settings_from_env(env: Mapping[str, str]) -> Settings:
         raise SettingsError("SSC_LANDING_TRUSTED_HOPS and PORT are numbers") from exc
     return Settings(
         page=Path(page),
+        privacy=Path(privacy),
         origin=origin,
         redirect_hosts=frozenset(h.strip().lower() for h in hosts.split(",") if h.strip()),
         bucket=bucket,
@@ -68,6 +71,7 @@ def production_app(settings: Settings) -> FastAPI:
     return create_app(
         load_page(settings.page),
         store,
+        privacy=load_page(settings.privacy, (USER_DATA_POLICY,)),
         origin=settings.origin,
         redirect_hosts=settings.redirect_hosts,
         trusted_hops=settings.trusted_hops,

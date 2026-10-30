@@ -9,14 +9,16 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
-from ssc_landing.__main__ import SettingsError, settings_from_env
+from ssc_landing.__main__ import Settings, SettingsError, production_app, settings_from_env
 from ssc_landing.app import MAX_BODY, create_app
-from ssc_landing.page import PLAIN_CSP, SECURITY_HEADERS, load_page
+from ssc_landing.page import PLAIN_CSP, SECURITY_HEADERS, USER_DATA_POLICY, PageError, load_page
 from ssc_landing.pilot import PilotRequest
 from ssc_landing.store import MemoryPilotStore, StoreError
 
 PAGE_PATH = Path(__file__).resolve().parents[3] / "landing" / "index.html"
 PAGE = load_page(PAGE_PATH)
+PRIVACY_PATH = PAGE_PATH.with_name("privacy.html")
+PRIVACY = load_page(PRIVACY_PATH, (USER_DATA_POLICY,))
 ORIGIN = "https://delimitus.com"
 GOOD = {
     "firstName": "Dana",
@@ -36,6 +38,7 @@ class World:
         app = create_app(
             PAGE,
             self.store,
+            privacy=PRIVACY,
             origin=ORIGIN,
             redirect_hosts=frozenset({"www.delimitus.com"}),
             trusted_hops=2,
@@ -83,6 +86,29 @@ def test_head_and_a_matching_etag(world: World) -> None:
     assert res.content == b""
 
 
+def test_the_privacy_page_is_served_with_its_policy_and_no_cookie(world: World) -> None:
+    res = world.client.get("/privacy")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "text/html; charset=utf-8"
+    assert res.headers["content-security-policy"] == PRIVACY.csp
+    assert "script-src 'none'" in PRIVACY.csp
+    assert res.headers["cache-control"] == "public, max-age=300"
+    for name, value in SECURITY_HEADERS.items():
+        assert res.headers[name] == value
+    assert "set-cookie" not in res.headers
+    assert res.content == PRIVACY.body
+
+
+def test_the_privacy_page_answers_head_and_a_matching_etag(world: World) -> None:
+    res = world.client.head("/privacy")
+    assert res.status_code == 200
+    assert res.headers["content-security-policy"] == PRIVACY.csp
+    assert res.content == b""
+    assert PRIVACY.etag != PAGE.etag
+    assert world.client.get("/privacy", headers={"if-none-match": PRIVACY.etag}).status_code == 304
+    assert world.client.get("/privacy", headers={"if-none-match": PAGE.etag}).status_code == 200
+
+
 def test_www_moves_permanently_to_the_apex(world: World) -> None:
     res = world.client.get(
         "https://www.delimitus.com/?ref=a",
@@ -94,7 +120,10 @@ def test_www_moves_permanently_to_the_apex(world: World) -> None:
     assert res.headers["strict-transport-security"] == SECURITY_HEADERS["strict-transport-security"]
 
 
-@pytest.mark.parametrize("path", ["/docs", "/openapi.json", "/healthz", "/sign-in", "/index.html"])
+@pytest.mark.parametrize(
+    "path",
+    ["/docs", "/openapi.json", "/healthz", "/sign-in", "/index.html", "/privacy.html", "/privacy/"],
+)
 def test_nothing_else_answers(world: World, path: str) -> None:
     res = world.client.get(path)
     assert res.status_code == 404
@@ -217,7 +246,7 @@ class _BrokenStore:
 
 def test_a_store_failure_is_a_503_and_an_error_log() -> None:
     logs: list[Mapping[str, object]] = []
-    app = create_app(PAGE, _BrokenStore(), origin=ORIGIN, log=logs.append)
+    app = create_app(PAGE, _BrokenStore(), privacy=PRIVACY, origin=ORIGIN, log=logs.append)
     client = TestClient(app, base_url=ORIGIN)
     res = client.post("/pilot-request", json=GOOD, headers={"origin": ORIGIN})
     assert res.status_code == 503
@@ -238,6 +267,7 @@ def test_settings_defaults_for_production() -> None:
     settings = settings_from_env(
         {"SSC_LANDING_PAGE": "/app/landing/index.html", "SSC_LANDING_BUCKET": "ssc-pilot-requests"}
     )
+    assert settings.privacy == Path("/app/landing/privacy.html")
     assert settings.origin == "https://delimitus.com"
     assert settings.redirect_hosts == frozenset({"www.delimitus.com"})
     assert settings.trusted_hops == 2
@@ -255,12 +285,54 @@ def test_settings_refuse_a_plain_http_origin_in_production() -> None:
         )
 
 
-def test_the_image_ships_only_the_venv_and_the_page() -> None:
+def test_settings_take_the_privacy_page_from_the_env() -> None:
+    settings = settings_from_env(
+        {"SSC_LANDING_ENV": "dev", "SSC_LANDING_PAGE": "p", "SSC_LANDING_PRIVACY_PAGE": "/x/q.html"}
+    )
+    assert settings.privacy == Path("/x/q.html")
+
+
+def test_the_service_refuses_a_privacy_page_that_breaks_the_policy(tmp_path: Path) -> None:
+    privacy = tmp_path / "privacy.html"
+    privacy.write_text('<p style="color:red">x</p>', encoding="utf-8")
+    settings = settings_from_env(
+        {
+            "SSC_LANDING_ENV": "dev",
+            "SSC_LANDING_PAGE": str(PAGE_PATH),
+            "SSC_LANDING_PRIVACY_PAGE": str(privacy),
+        }
+    )
+    with pytest.raises(PageError, match="style="):
+        production_app(settings)
+    privacy.write_text(f'<a href="{USER_DATA_POLICY}">x</a>', encoding="utf-8")
+    production_app(settings)
+
+
+def test_the_service_refuses_a_missing_privacy_page(tmp_path: Path) -> None:
+    settings = Settings(
+        page=PAGE_PATH,
+        privacy=tmp_path / "missing.html",
+        origin=ORIGIN,
+        redirect_hosts=frozenset(),
+        bucket=None,
+        trusted_hops=0,
+        port=8080,
+    )
+    with pytest.raises(FileNotFoundError):
+        production_app(settings)
+
+
+def test_the_image_ships_only_the_venv_and_the_pages() -> None:
     dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(encoding="utf-8")
     last = re.split(r"^FROM ", dockerfile, flags=re.M)[-1]
     copies = [" ".join(ln.split()[1:]) for ln in last.splitlines() if ln.startswith("COPY ")]
     assert copies == [
         "--from=builder /app/.venv /app/.venv",
         "landing/index.html /app/landing/index.html",
+        "landing/privacy.html /app/landing/privacy.html",
     ]
+    ignore = (Path(__file__).resolve().parents[1] / "Dockerfile.dockerignore").read_text(
+        encoding="utf-8"
+    )
+    assert "!landing/privacy.html" in ignore.splitlines()
     assert all("@sha256:" in line for line in re.findall(r"^FROM .*", dockerfile, flags=re.M))

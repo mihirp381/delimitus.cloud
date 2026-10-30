@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy · Delimitus</title>
+<meta name="description" content="What personal data Delimitus collects through delimitus.com and the Delimitus console, why, who handles it and how long it is kept.">
+<meta name="theme-color" content="#FFFFFF">
+<style>
+:root {
+  color-scheme: light;
+  --ground: #FFFFFF;
+  --ground-alt: #F5F5F7;
+  --line: #E3E3E8;
+  --ink: #1D1D1F;
+  --ink-2: #424245;
+  --ink-3: #6E6E73;
+  --accent: #0071E3;
+  --accent-ink: #0066CC;
+  --spectrum: linear-gradient(90deg, #0A84FF 0%, #6E5BFF 22%, #C24BF0 44%, #FF378C 64%, #FF5E3A 82%, #FF9F0A 100%);
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --r-sm: 6px;
+  --pad: clamp(16px, 5vw, 64px);
+  --nav-h: 64px;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--ground); color: var(--ink);
+  font-family: var(--sans); font-size: 17px; line-height: 1.6; letter-spacing: -0.012em;
+  -webkit-font-smoothing: antialiased; overflow-x: clip;
+}
+a { color: var(--accent-ink); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--r-sm); }
+.wrap { width: 100%; max-width: 760px; margin: 0 auto; padding-left: var(--pad); padding-right: var(--pad); }
+.nav { border-bottom: 1px solid rgba(0, 0, 0, 0.08); }
+.nav__in { display: flex; align-items: center; justify-content: space-between; gap: 24px; height: calc(var(--nav-h) - 1px); }
+.nav__in > a:last-child { color: var(--ink-2); font-size: 0.9rem; text-decoration: none; white-space: nowrap; }
+.nav__in > a:last-child:hover { color: var(--ink); text-decoration: underline; }
+.brand { display: flex; align-items: center; gap: 5px; color: var(--ink); text-decoration: none; }
+.brand__mark { display: block; flex: none; width: 24px; height: 24px; }
+.brand__word { display: block; flex: none; width: 91.2px; height: 15.3px; }
+main { padding: clamp(40px, 7vw, 88px) 0; }
+.rule { display: block; height: 3px; width: 34px; border-radius: 3px; background: var(--spectrum); margin-bottom: 18px; }
+h1, h2 { font-family: var(--display); font-weight: 700; color: var(--ink); text-wrap: balance; }
+h1 { font-size: clamp(2.2rem, 5vw, 3.2rem); line-height: 1.06; letter-spacing: -0.03em; margin: 0 0 10px; }
+h2 { font-size: 1.3rem; line-height: 1.25; letter-spacing: -0.02em; font-weight: 600; margin: 44px 0 10px; }
+p, li { color: var(--ink-2); text-wrap: pretty; }
+p { margin: 0 0 14px; }
+ul { margin: 0 0 14px; padding-left: 1.2em; }
+li { margin-bottom: 8px; }
+strong { color: var(--ink); font-weight: 600; }
+.date { color: var(--ink-3); font-size: 0.95rem; }
+footer { background: var(--ground-alt); border-top: 1px solid var(--line); }
+.foot { padding-top: 36px; padding-bottom: 36px; display: flex; flex-wrap: wrap; gap: 16px 40px; justify-content: space-between; align-items: center; }
+.foot a:not(.brand) { color: var(--ink-2); font-size: 0.85rem; text-decoration: none; padding-block: 10px; }
+.foot a:not(.brand):hover { color: var(--ink); text-decoration: underline; }
+.foot .brand__mark { width: 22px; height: 22px; }
+.foot .brand__word { width: 82.9px; height: 13.9px; }
+</style>
+</head>
+<body>
+
+<nav class="nav" aria-label="Main">
+  <div class="wrap nav__in">
+    <a class="brand" href="/" aria-label="Delimitus">
+      <svg class="brand__mark" width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><defs><linearGradient id="dl-nav" x1="3.52" y1="16.98" x2="18.06" y2="6.42" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#0071E3"/><stop offset="0.22" stop-color="#0A84FF"/><stop offset="0.5" stop-color="#6E5BFF"/><stop offset="0.7" stop-color="#C24BF0"/><stop offset="0.87" stop-color="#FF378C"/><stop offset="1" stop-color="#FF9F0A"/></linearGradient></defs><path fill="url(#dl-nav)" fill-rule="evenodd" d="M6 3H11.5A8 8 0 0 1 11.5 19H6A2 2 0 0 1 4 17V5A2 2 0 0 1 6 3ZM7.52 16L10.16 16A0.35 0.35 0 0 0 10.49 15.78L14.25 6.48A0.35 0.35 0 0 0 13.92 6L11.28 6A0.35 0.35 0 0 0 10.95 6.22L7.19 15.52A0.35 0.35 0 0 0 7.52 16Z"/></svg>
+      <svg class="brand__word" width="82.9" height="13.9" viewBox="0 -1473 8958 1506" aria-hidden="true" focusable="false"><path fill="currentColor" d="M0 0V-1440H466Q483 -1440 536 -1439Q589 -1438 638 -1432Q812 -1411 933 -1311Q1054 -1211 1117 -1057Q1180 -903 1180 -720Q1180 -537 1117 -383Q1054 -229 933 -129Q812 -29 638 -8Q589 -2 536 -1Q483 0 466 0ZM276 -256H466Q493 -256 539 -257.5Q585 -259 622 -266Q716 -285 775.5 -354Q835 -423 863.5 -520Q892 -617 892 -720Q892 -828 862.5 -925Q833 -1022 773 -1089Q713 -1156 622 -1174Q585 -1182 539 -1183Q493 -1184 466 -1184H276ZM1882 30Q1716 30 1589.5 -41.5Q1463 -113 1391.5 -238.5Q1320 -364 1320 -526Q1320 -703 1390 -834Q1460 -965 1583 -1037.5Q1706 -1110 1866 -1110Q2036 -1110 2155 -1030Q2274 -950 2331 -805Q2388 -660 2371 -464H2102V-564Q2102 -729 2049.5 -801.5Q1997 -874 1878 -874Q1739 -874 1673.5 -789.5Q1608 -705 1608 -540Q1608 -389 1673.5 -306.5Q1739 -224 1866 -224Q1946 -224 2003 -259Q2060 -294 2090 -360L2362 -282Q2301 -134 2169.5 -52Q2038 30 1882 30ZM1524 -464V-666H2240V-464ZM2576 0V-1470H2848V0ZM3128 -1230V-1470H3400V-1230ZM3128 0V-1080H3400V0ZM4960 0V-638Q4960 -745 4909.5 -804.5Q4859 -864 4770 -864Q4713 -864 4671 -837.5Q4629 -811 4605.5 -763.5Q4582 -716 4582 -654L4468 -730Q4468 -841 4520.5 -926Q4573 -1011 4661.5 -1058.5Q4750 -1106 4858 -1106Q5043 -1106 5137.5 -996.5Q5232 -887 5232 -710V0ZM3658 0V-1080H3898V-722H3932V0ZM4310 0V-638Q4310 -745 4259.5 -804.5Q4209 -864 4120 -864Q4035 -864 3983.5 -805.5Q3932 -747 3932 -654L3818 -734Q3818 -840 3871 -924Q3924 -1008 4013.5 -1057Q4103 -1106 4214 -1106Q4341 -1106 4422.5 -1052Q4504 -998 4543 -908Q4582 -818 4582 -710V0ZM5472 -1230V-1470H5744V-1230ZM5472 0V-1080H5744V0ZM6652 0Q6540 21 6432.5 18.5Q6325 16 6240.5 -19.5Q6156 -55 6112 -134Q6072 -208 6070 -284.5Q6068 -361 6068 -458V-1380H6340V-474Q6340 -411 6341.5 -360.5Q6343 -310 6362 -280Q6398 -223 6477 -218Q6556 -213 6652 -226ZM5884 -870V-1080H6652V-870ZM7254 32Q7127 32 7047 -11Q6967 -54 6922.5 -120Q6878 -186 6859 -257.5Q6840 -329 6836 -388Q6832 -447 6832 -474V-1080H7108V-570Q7108 -533 7112 -475.5Q7116 -418 7137 -360Q7158 -302 7205.5 -263Q7253 -224 7340 -224Q7375 -224 7415 -235Q7455 -246 7490 -277.5Q7525 -309 7547.5 -370.5Q7570 -432 7570 -532L7726 -458Q7726 -330 7674 -218Q7622 -106 7517.5 -37Q7413 32 7254 32ZM7604 0V-358H7570V-1080H7844V0ZM8506 30Q8302 30 8176.5 -62.5Q8051 -155 8024 -324L8302 -366Q8319 -290 8377.5 -247Q8436 -204 8526 -204Q8600 -204 8640 -232.5Q8680 -261 8680 -312Q8680 -344 8664 -363.5Q8648 -383 8592.5 -402Q8537 -421 8420 -452Q8288 -486 8209 -528Q8130 -570 8095 -628.5Q8060 -687 8060 -770Q8060 -874 8113 -950.5Q8166 -1027 8262.5 -1068.5Q8359 -1110 8490 -1110Q8617 -1110 8715 -1071Q8813 -1032 8873.5 -960Q8934 -888 8948 -790L8670 -740Q8663 -800 8618 -835Q8573 -870 8496 -876Q8421 -881 8375.5 -856Q8330 -831 8330 -784Q8330 -756 8349.5 -737Q8369 -718 8430.5 -698Q8492 -678 8618 -646Q8741 -614 8815.5 -571.5Q8890 -529 8924 -469.5Q8958 -410 8958 -326Q8958 -160 8838 -65Q8718 30 8506 30Z"/></svg>
+    </a>
+    <a href="/">Back to delimitus.com</a>
+  </div>
+</nav>
+
+<main class="wrap">
+  <span class="rule" aria-hidden="true"></span>
+  <h1>Privacy</h1>
+  <p class="date">Effective 30 October 2026</p>
+  <p>This page says what personal data Delimitus collects through delimitus.com and the Delimitus console, why, who else handles it and how long we keep it.</p>
+
+  <h2>Who we are</h2>
+  <p>Delimitus runs delimitus.com and the Delimitus console, where coding agents deploy company software. For any question about your data, or to ask us to see, correct or delete it, write to <a href="mailto:privacy@delimitus.com">privacy@delimitus.com</a>.</p>
+
+  <h2>The website</h2>
+  <p>delimitus.com sets no cookies, runs no analytics and loads nothing from other sites.</p>
+  <p>If you request a pilot, the form sends us your first name, last name, work email, company and, if you fill it in, the tools you use. Each request is stored in a private storage bucket in our Google Cloud project. We keep it for 12 months to answer you and use it only for that; after 12 months it is deleted. Only the founder reads them.</p>
+  <p>To slow abuse, the form counts requests from each network address for one minute, in memory, and does not store the address. The site writes no access log of its own. Google Cloud, which hosts it, keeps a request log of each visit (the time, the network address, the browser and the page asked for) for 30 days, which we use only to run and protect the site.</p>
+
+  <h2>The console and sign-in</h2>
+  <p>The console (console.delimitus.com), its sign-in (auth.delimitus.com) and its API (api.delimitus.com) are for people whose organisation uses Delimitus. You sign in through WorkOS, our sign-in provider, with Google, Microsoft or the identity provider your organisation uses, such as Okta. Your organisation may also connect its directory, so that people it adds or removes there are added or removed here.</p>
+  <p>When you sign in, we receive your name, your email address, whether your provider has verified it, and your provider's id for you. We keep your name, email address and that id, with your role in your organisation and, where your organisation connects its directory, the names of the groups you belong to. We do not keep a profile picture.</p>
+  <p>Delimitus sets cookies only on auth.delimitus.com and on the hosts of your organisation's apps: short-lived ones (10 minutes or less) during sign-in or while an app starts, and a session cookie that keeps you signed in for up to 12 hours. Your organisation's apps may set their own cookies; WorkOS and your identity provider set theirs on their own sites. The console keeps two settings in your browser: your choice of light or dark theme, and the last organisation id or invite code you entered, so the sign-in page can offer it again.</p>
+  <p>We use this data to sign you in; to show who you are to you and to the people in your organisation; to apply the access your organisation's admins grant; to record who did what in your organisation's audit log; and to send service emails, such as a welcome to your organisation's first admin, approval requests, reminders and decisions. When you open one of your organisation's apps, we pass that app your name and email address so it knows who you are. We count how the console is used under a pseudonym, never your name or email address. We do not sell personal data and do not use it for advertising.</p>
+
+  <h2>Google user data</h2>
+  <p>If you sign in with Google, we ask Google, through WorkOS, only for the basic profile it shares at sign-in: your name, email address and, if you have one, profile picture. We ask for no other Google data, such as your mail, files or calendar.</p>
+  <p>We use data obtained through Google sign-in only to provide the console's features described above: signing you in, showing who you are to your organisation, passing your name and email address to the organisation's apps you open, and sending service emails. We share it only with your organisation, its apps and the processors below. Delimitus's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+
+  <h2>Who else handles your data</h2>
+  <ul>
+    <li><strong>Google Cloud</strong> hosts the website, the console and their data, in its us-central1 region in the United States.</li>
+    <li><strong>WorkOS</strong> runs sign-in and, where your organisation connects one, its directory. It receives what your identity provider sends about you.</li>
+    <li><strong>Our email provider</strong> delivers the service emails described above.</li>
+  </ul>
+  <p>Apart from your organisation and its apps, as described above, we share personal data with no one else unless the law requires us to.</p>
+
+  <h2>How long we keep it, and deleting it</h2>
+  <ul>
+    <li><strong>Pilot requests</strong> are deleted after 12 months, or sooner if you ask.</li>
+    <li><strong>Server logs</strong> are kept for 30 days.</li>
+    <li><strong>Your console account</strong> is kept while your organisation uses Delimitus. When your organisation removes you, in its directory or in the console, your sign-in ends and your account is deactivated. On request, we overwrite your name and email address and delete the link to your sign-in account.</li>
+    <li><strong>The audit log</strong> is append-only: our service cannot change or delete its entries. It records who acted by an internal id and today stores no names, email addresses or network addresses.</li>
+    <li><strong>Usage counts</strong> are kept under the pseudonym; on request, we delete yours.</li>
+  </ul>
+  <p>To ask for any of this, write to <a href="mailto:privacy@delimitus.com">privacy@delimitus.com</a>. If you use the console through your employer, you can also ask your organisation's admins.</p>
+
+  <h2>Changes to this page</h2>
+  <p>When what we collect or how we use it changes, we update this page and its effective date.</p>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <a class="brand" href="/" aria-label="Delimitus">
+        <svg class="brand__mark" width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" d="M6 3H11.5A8 8 0 0 1 11.5 19H6A2 2 0 0 1 4 17V5A2 2 0 0 1 6 3ZM7.52 16L10.16 16A0.35 0.35 0 0 0 10.49 15.78L14.25 6.48A0.35 0.35 0 0 0 13.92 6L11.28 6A0.35 0.35 0 0 0 10.95 6.22L7.19 15.52A0.35 0.35 0 0 0 7.52 16Z"/></svg>
+        <svg class="brand__word" width="82.9" height="13.9" viewBox="0 -1473 8958 1506" aria-hidden="true" focusable="false"><path fill="currentColor" d="M0 0V-1440H466Q483 -1440 536 -1439Q589 -1438 638 -1432Q812 -1411 933 -1311Q1054 -1211 1117 -1057Q1180 -903 1180 -720Q1180 -537 1117 -383Q1054 -229 933 -129Q812 -29 638 -8Q589 -2 536 -1Q483 0 466 0ZM276 -256H466Q493 -256 539 -257.5Q585 -259 622 -266Q716 -285 775.5 -354Q835 -423 863.5 -520Q892 -617 892 -720Q892 -828 862.5 -925Q833 -1022 773 -1089Q713 -1156 622 -1174Q585 -1182 539 -1183Q493 -1184 466 -1184H276ZM1882 30Q1716 30 1589.5 -41.5Q1463 -113 1391.5 -238.5Q1320 -364 1320 -526Q1320 -703 1390 -834Q1460 -965 1583 -1037.5Q1706 -1110 1866 -1110Q2036 -1110 2155 -1030Q2274 -950 2331 -805Q2388 -660 2371 -464H2102V-564Q2102 -729 2049.5 -801.5Q1997 -874 1878 -874Q1739 -874 1673.5 -789.5Q1608 -705 1608 -540Q1608 -389 1673.5 -306.5Q1739 -224 1866 -224Q1946 -224 2003 -259Q2060 -294 2090 -360L2362 -282Q2301 -134 2169.5 -52Q2038 30 1882 30ZM1524 -464V-666H2240V-464ZM2576 0V-1470H2848V0ZM3128 -1230V-1470H3400V-1230ZM3128 0V-1080H3400V0ZM4960 0V-638Q4960 -745 4909.5 -804.5Q4859 -864 4770 -864Q4713 -864 4671 -837.5Q4629 -811 4605.5 -763.5Q4582 -716 4582 -654L4468 -730Q4468 -841 4520.5 -926Q4573 -1011 4661.5 -1058.5Q4750 -1106 4858 -1106Q5043 -1106 5137.5 -996.5Q5232 -887 5232 -710V0ZM3658 0V-1080H3898V-722H3932V0ZM4310 0V-638Q4310 -745 4259.5 -804.5Q4209 -864 4120 -864Q4035 -864 3983.5 -805.5Q3932 -747 3932 -654L3818 -734Q3818 -840 3871 -924Q3924 -1008 4013.5 -1057Q4103 -1106 4214 -1106Q4341 -1106 4422.5 -1052Q4504 -998 4543 -908Q4582 -818 4582 -710V0ZM5472 -1230V-1470H5744V-1230ZM5472 0V-1080H5744V0ZM6652 0Q6540 21 6432.5 18.5Q6325 16 6240.5 -19.5Q6156 -55 6112 -134Q6072 -208 6070 -284.5Q6068 -361 6068 -458V-1380H6340V-474Q6340 -411 6341.5 -360.5Q6343 -310 6362 -280Q6398 -223 6477 -218Q6556 -213 6652 -226ZM5884 -870V-1080H6652V-870ZM7254 32Q7127 32 7047 -11Q6967 -54 6922.5 -120Q6878 -186 6859 -257.5Q6840 -329 6836 -388Q6832 -447 6832 -474V-1080H7108V-570Q7108 -533 7112 -475.5Q7116 -418 7137 -360Q7158 -302 7205.5 -263Q7253 -224 7340 -224Q7375 -224 7415 -235Q7455 -246 7490 -277.5Q7525 -309 7547.5 -370.5Q7570 -432 7570 -532L7726 -458Q7726 -330 7674 -218Q7622 -106 7517.5 -37Q7413 32 7254 32ZM7604 0V-358H7570V-1080H7844V0ZM8506 30Q8302 30 8176.5 -62.5Q8051 -155 8024 -324L8302 -366Q8319 -290 8377.5 -247Q8436 -204 8526 -204Q8600 -204 8640 -232.5Q8680 -261 8680 -312Q8680 -344 8664 -363.5Q8648 -383 8592.5 -402Q8537 -421 8420 -452Q8288 -486 8209 -528Q8130 -570 8095 -628.5Q8060 -687 8060 -770Q8060 -874 8113 -950.5Q8166 -1027 8262.5 -1068.5Q8359 -1110 8490 -1110Q8617 -1110 8715 -1071Q8813 -1032 8873.5 -960Q8934 -888 8948 -790L8670 -740Q8663 -800 8618 -835Q8573 -870 8496 -876Q8421 -881 8375.5 -856Q8330 -831 8330 -784Q8330 -756 8349.5 -737Q8369 -718 8430.5 -698Q8492 -678 8618 -646Q8741 -614 8815.5 -571.5Q8890 -529 8924 -469.5Q8958 -410 8958 -326Q8958 -160 8838 -65Q8718 30 8506 30Z"/></svg>
+      </a>
+    <a href="/">Back to delimitus.com</a>
+  </div>
+</footer>
+
+</body>
+</html>

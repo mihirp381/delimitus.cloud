@@ -87,6 +87,12 @@ def test_no_forbidden_phrase_is_on_the_page() -> None:
     assert forbidden_found(HTML, forbidden_phrases()) == []
 
 
+def test_no_forbidden_phrase_is_on_the_privacy_page() -> None:
+    privacy = (LANDING / "privacy.html").read_text(encoding="utf-8")
+    assert forbidden_found(privacy, forbidden_phrases()) == []
+    assert "data-claim" not in privacy
+
+
 def test_every_public_source_on_the_page_has_a_source_row() -> None:
     sources = REGISTER.split("## Public sources", 1)[1].split("\n## ", 1)[0]
     on_page = set(

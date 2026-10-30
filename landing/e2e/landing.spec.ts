@@ -76,6 +76,21 @@ test('the nav shows both buttons, and all seven links on a wide screen', async (
   }
 });
 
+test('the privacy page loads only from its own origin and links back home', async ({ page, baseURL }) => {
+  const seen = watch(page, new URL(baseURL!).origin);
+  await page.goto('/');
+  await page.locator('footer a[href="/privacy"]').click();
+  await expect(page).toHaveURL(/\/privacy$/);
+  await expect(page.locator('h1')).toHaveText('Privacy');
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+  expect(seen.foreign).toEqual([]);
+  expect(seen.cookies).toEqual([]);
+  expect(seen.blocked).toEqual([]);
+  await page.locator('footer a', { hasText: 'Back to delimitus.com' }).click();
+  await expect(page).toHaveURL(/\/$/);
+});
+
 test('has no sideways scroll', async ({ page }) => {
   await page.goto('/');
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
