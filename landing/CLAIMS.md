@@ -83,14 +83,14 @@ page names as a processor. The facts it states and where each comes from:
 | Request and server logs kept 30 days | Decision 021 (cell logs); the control project's request log is at Google Cloud's default of 30 days (`db/PII.md`), which no stack changes | 2026-10-30 |
 | Sign-in through WorkOS with Google, Microsoft or the organisation's identity provider; directory sync | Runbook ssc-019, decision 002, `identity/social.py` | 2026-10-30 |
 | What is received and kept: name, email, verified flag, the provider's id, role, group names; no picture | `identity/rules.py`, `ssc_control/db/PII.md` | 2026-10-30 |
-| Cookies on the auth host only: 10-minute sign-in and consent cookies, a 12-hour session | `identity/authhost.py` (`LOGIN_SECONDS`), `identity/authorize.py` (`CONSENT_SECONDS`), `identity/sessions.py` (`SESSION_SECONDS`) | 2026-10-30 |
+| Cookies only on the auth host and app hosts: 10 minutes or less during sign-in or an app's start, a session of up to 12 hours | Auth host: `identity/authhost.py` (`LOGIN_SECONDS`), `identity/authorize.py` (`CONSENT_SECONDS`), `identity/sessions.py` (`SESSION_SECONDS`). App hosts: `packages/ssc_edge/src/ssc_edge/session.py` (`__Host-ssc-session` up to `MAX_SESSION_SECONDS`, `__Host-ssc-login` `LOGIN_SECONDS`, `__Host-ssc-wake` `WAKE_SECONDS`) | 2026-10-30 |
 | The console keeps the theme and the last org id or invite code in the browser | `console/src/theme.ts`, `console/src/auth/oauth.ts` | 2026-10-30 |
 | Service mail: welcome, approval arrival, reminder, decision, admin notices | `notifications/delivery.py`, runbooks ssc-049 and ssc-110, decision 033 (provider not chosen) | 2026-10-30 |
 | Apps receive the person's name and email; usage counted under a pseudonym | `db/PII.md` | 2026-10-30 |
-| Google sign-in asks WorkOS's default scopes only | `identity/workos.py` sends no provider scopes | 2026-10-30 |
+| Google sign-in asks WorkOS's default scopes only; its data used only for the console features the page lists and shared only with the organisation, its apps and the processors | `identity/workos.py` sends no provider scopes; `db/PII.md` (names and emails passed to apps) | 2026-10-30 |
 | Everything in `us-central1` | Decision 021 | 2026-10-30 |
 | Deactivation on removal; overwrite name and email and delete the identity link on request | `db/PII.md`, runbook ssc-019, `api/routes/v1/users.py` | 2026-10-30 |
-| The audit log cannot be edited and holds no names, emails or addresses | Decision 012 | 2026-10-30 |
+| The audit log is append-only to the service and today stores no names, emails or addresses | Decision 012 (the application role cannot UPDATE, DELETE or TRUNCATE; a superuser still could; `actor_ip` stays NULL; views name no personal data) | 2026-10-30 |
 
 Before the page goes live, `privacy@delimitus.com` must receive mail.
 

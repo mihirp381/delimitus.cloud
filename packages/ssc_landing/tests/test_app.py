@@ -121,7 +121,8 @@ def test_www_moves_permanently_to_the_apex(world: World) -> None:
 
 
 @pytest.mark.parametrize(
-    "path", ["/docs", "/openapi.json", "/healthz", "/sign-in", "/index.html", "/privacy.html"]
+    "path",
+    ["/docs", "/openapi.json", "/healthz", "/sign-in", "/index.html", "/privacy.html", "/privacy/"],
 )
 def test_nothing_else_answers(world: World, path: str) -> None:
     res = world.client.get(path)

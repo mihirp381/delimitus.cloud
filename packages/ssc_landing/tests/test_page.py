@@ -477,15 +477,21 @@ def test_no_denylisted_word_is_on_the_privacy_page_but_its_processors() -> None:
 
 
 def test_the_privacy_page_says_what_google_asks() -> None:
-    text = re.sub(r"\s+", " ", PRIVACY)
-    assert "Effective 30 October 2026" in text
-    assert text.count('href="mailto:privacy@delimitus.com"') == 2
-    assert "will adhere to the <a" in text
-    assert "including the Limited Use requirements" in text
-    assert "sets no cookies, runs no analytics" in text
-    assert "12 months" in text
-    assert "us-central1" in text
-    assert '<a href="/">Back to delimitus.com</a>' in text
+    text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", PRIVACY))
+    assert (
+        "Delimitus's use and transfer to any other app of information received from Google APIs"
+        " will adhere to the Google API Services User Data Policy, including the Limited Use"
+        " requirements." in text
+    )
+    assert f'<a href="{USER_DATA_POLICY}">Google API Services User Data Policy</a>' in PRIVACY
+    assert '<a href="/">Back to delimitus.com</a>' in PRIVACY
+
+
+def test_the_privacy_page_may_not_carry_the_sign_in_link() -> None:
+    page = PRIVACY.replace("</main>", f'<a href="{SIGN_IN}">Sign in</a></main>')
+    with pytest.raises(PageError, match="another origin"):
+        check_page(page, len(page), (USER_DATA_POLICY,))
+    check_page(PRIVACY, len(PRIVACY), (USER_DATA_POLICY,))
 
 
 def test_the_footer_links_the_privacy_page() -> None:
