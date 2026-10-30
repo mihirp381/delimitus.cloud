@@ -7,6 +7,7 @@ form.
 | File | What it is |
 |---|---|
 | `index.html` | The page: inline CSS, JS and SVG, one PNG data URI (the horizon), no other file |
+| `privacy.html` | The privacy page at `/privacy`: inline CSS and SVG, no script; `SSC_LANDING_PRIVACY_PAGE`, default `privacy.html` beside the page |
 | `art/` | The horizon mask; `cd landing/art && python3 embed.py` rebuilds it and re-embeds it (needs Pillow and numpy, not part of the workspace) |
 | `CLAIMS.md` | Every claim on the page with its truth state and the date checked, and the public and economics sources |
 | `denylist.txt` | Words that never appear on the page |
@@ -76,3 +77,11 @@ The nav's Sign in button is the page's one link to the console's sign-in,
 `https://console.delimitus.com/login`; a link is a navigation, not a load, so the content security
 policy needs no change. `page.py`'s check allows that exact `href` (`SIGN_IN`) and still refuses
 every other `href`, `src` or `action` to another origin.
+
+## Privacy
+
+`privacy.html` is held to the same checks at start-up, with its own policy by hash. Its one link to
+another origin is Google's API Services User Data Policy (`USER_DATA_POLICY`), which Google's
+sign-in review asks for. It names WorkOS as a processor, the one denylisted word it may use. Its
+facts and their sources are in `CLAIMS.md`, "The privacy page"; the footer of `index.html` links
+it.

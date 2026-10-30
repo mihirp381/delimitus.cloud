@@ -68,6 +68,32 @@ carry no `data-claim`.
 |---|---|---|---|
 | social | Social sign-in (Google and personal Microsoft accounts; GitHub is refused until SSC checks GitHub's verified addresses) for a pilot org an operator creates in social mode, without a directory (a directory org is never switched to it); admins invite people by email, only at the org's own email domains, which every invite, reactivation and sign-in checks (decision 002 amendment 2026-10-27; domains 2026-10-28) | Pilot orgs only, not offered to customers; the `idp` row is unchanged. Built and covered by the control-plane and console tests; the live check in runbook ssc-019 is not yet run. The domain check is on the address, not the account: a personal Google account made with a company address on a domain the company does not manage in Google Workspace, or a personal Microsoft account with a company address, survives IT disabling the person's work account, so only a pilot admin deactivating them in People ends their access. SSC cannot check a managed-account signal (Google `hd`, a Microsoft tenant id), which the WorkOS profile does not carry; company SSO with directory sync closes this | 2026-10-28 |
 
+## The privacy page
+
+`privacy.html` (served at `/privacy`, effective 2026-10-30) is not a marketing page: it carries no
+`data-claim`, and the claims tests cover `index.html` only. Its own tests hold it to the same
+content security policy, the forbidden phrases and the denylist, except `WorkOS`, which a privacy
+page names as a processor. The facts it states and where each comes from:
+
+| Fact | Source | Checked |
+|---|---|---|
+| The site sets no cookie, runs no analytics and loads nothing from another origin | `README.md` (rules), `packages/ssc_landing/src/ssc_landing/page.py` | 2026-10-30 |
+| The form's fields; kept 12 months in a private bucket, create-only, read by the founder | `ssc_landing/pilot.py`, `ssc_landing/store.py`, `infra/ssc_infra/landing.py` (`RETENTION_DAYS`), decision 028 | 2026-10-30 |
+| The form counts requests per address for a minute in memory; the site writes no access log | `ssc_landing/limits.py`, `ssc_landing/__main__.py` | 2026-10-30 |
+| Request and server logs kept 30 days | Decision 021 (cell logs); the control project's request log is at Google Cloud's default of 30 days (`db/PII.md`), which no stack changes | 2026-10-30 |
+| Sign-in through WorkOS with Google, Microsoft or the organisation's identity provider; directory sync | Runbook ssc-019, decision 002, `identity/social.py` | 2026-10-30 |
+| What is received and kept: name, email, verified flag, the provider's id, role, group names; no picture | `identity/rules.py`, `ssc_control/db/PII.md` | 2026-10-30 |
+| Cookies on the auth host only: 10-minute sign-in and consent cookies, a 12-hour session | `identity/authhost.py` (`LOGIN_SECONDS`), `identity/authorize.py` (`CONSENT_SECONDS`), `identity/sessions.py` (`SESSION_SECONDS`) | 2026-10-30 |
+| The console keeps the theme and the last org id or invite code in the browser | `console/src/theme.ts`, `console/src/auth/oauth.ts` | 2026-10-30 |
+| Service mail: welcome, approval arrival, reminder, decision, admin notices | `notifications/delivery.py`, runbooks ssc-049 and ssc-110, decision 033 (provider not chosen) | 2026-10-30 |
+| Apps receive the person's name and email; usage counted under a pseudonym | `db/PII.md` | 2026-10-30 |
+| Google sign-in asks WorkOS's default scopes only | `identity/workos.py` sends no provider scopes | 2026-10-30 |
+| Everything in `us-central1` | Decision 021 | 2026-10-30 |
+| Deactivation on removal; overwrite name and email and delete the identity link on request | `db/PII.md`, runbook ssc-019, `api/routes/v1/users.py` | 2026-10-30 |
+| The audit log cannot be edited and holds no names, emails or addresses | Decision 012 | 2026-10-30 |
+
+Before the page goes live, `privacy@delimitus.com` must receive mail.
+
 ## Public sources
 
 Third-party figures and quotes on the page. Each URL is written as text on the page, never as a

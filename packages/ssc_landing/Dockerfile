@@ -17,11 +17,12 @@ COPY packages packages
 COPY conformance/pyproject.toml conformance/pyproject.toml
 RUN UV_CACHE_DIR=/tmp/uv-cache uv sync --locked --no-dev --no-editable --package ssc-landing
 
-# Only the installed environment and the page ship; no source tree, owned by root.
+# Only the installed environment and the two pages ship; no source tree, owned by root.
 FROM python:3.14-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
 RUN useradd --uid 10001 ssc
 COPY --from=builder /app/.venv /app/.venv
 COPY landing/index.html /app/landing/index.html
+COPY landing/privacy.html /app/landing/privacy.html
 USER ssc
 WORKDIR /app
 ENV PATH=/app/.venv/bin:$PATH \

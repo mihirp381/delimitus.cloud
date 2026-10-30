@@ -10,6 +10,7 @@ import pytest
 from ssc_landing.page import (
     MAX_PAGE_BYTES,
     SIGN_IN,
+    USER_DATA_POLICY,
     PageError,
     check_page,
     content_security_policy,
@@ -18,13 +19,15 @@ from ssc_landing.page import (
 
 LANDING = Path(__file__).resolve().parents[3] / "landing"
 HTML = (LANDING / "index.html").read_text(encoding="utf-8")
+PRIVACY = (LANDING / "privacy.html").read_text(encoding="utf-8")
+PRIVACY_NAMES = frozenset({"workos"})
 DATA_URI = re.compile(r"data:image/[a-z+]+[;,][A-Za-z0-9+/=;,%'.:\-]*")
 STYLE = re.compile(r"<style>.*?</style>", re.DOTALL)
 
 
-def _text_without_styles() -> str:
+def _text_without_styles(html: str = HTML) -> str:
     """What a reader or a crawler sees: markup, copy and script strings, without CSS or bitmaps."""
-    return DATA_URI.sub("", STYLE.sub("", HTML))
+    return DATA_URI.sub("", STYLE.sub("", html))
 
 
 def _denylist() -> list[str]:
@@ -445,3 +448,47 @@ def test_the_approval_time_is_our_estimate() -> None:
     assert "MEASURE" not in register
     assert "18 to 24 min" in register
     assert "18 to 24" not in HTML
+
+
+def test_the_privacy_page_loads_under_its_own_policy_and_weight() -> None:
+    page = load_page(LANDING / "privacy.html", (USER_DATA_POLICY,))
+    assert len(page.body) < MAX_PAGE_BYTES
+    assert page.csp.startswith("default-src 'none'; script-src 'none'; style-src 'sha256-")
+    assert "unsafe-inline" not in page.csp
+    assert "<script" not in PRIVACY
+    assert "data:image/png" not in PRIVACY
+
+
+def test_the_privacy_page_links_out_only_to_the_google_policy() -> None:
+    text = _text_without_styles(PRIVACY)
+    assert text.count(f'href="{USER_DATA_POLICY}"') == 1
+    text = text.replace(f'href="{USER_DATA_POLICY}"', "")
+    assert re.findall(r"""(?:src|href|action|srcset)\s*=\s*["']?(?:https?:)?//""", text) == []
+    with pytest.raises(PageError, match="another origin"):
+        check_page(PRIVACY, len(PRIVACY))
+
+
+def test_no_denylisted_word_is_on_the_privacy_page_but_its_processors() -> None:
+    """The page names the sign-in processor, which the landing page never does."""
+    text = _text_without_styles(PRIVACY)
+    terms = [t for t in _denylist() if t.lower() not in PRIVACY_NAMES]
+    assert PRIVACY_NAMES <= {t.lower() for t in _denylist()}
+    assert [t for t in terms if _term(t).search(text)] == []
+
+
+def test_the_privacy_page_says_what_google_asks() -> None:
+    text = re.sub(r"\s+", " ", PRIVACY)
+    assert "Effective 30 October 2026" in text
+    assert text.count('href="mailto:privacy@delimitus.com"') == 2
+    assert "will adhere to the <a" in text
+    assert "including the Limited Use requirements" in text
+    assert "sets no cookies, runs no analytics" in text
+    assert "12 months" in text
+    assert "us-central1" in text
+    assert '<a href="/">Back to delimitus.com</a>' in text
+
+
+def test_the_footer_links_the_privacy_page() -> None:
+    footer = re.search(r"<footer>.*?</footer>", HTML, flags=re.S)
+    assert footer is not None
+    assert '<a href="/privacy">Privacy</a>' in footer[0]

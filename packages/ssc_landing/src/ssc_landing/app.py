@@ -1,4 +1,5 @@
-"""delimitus.com: the landing page and the one thing it posts to, ``/pilot-request`` (SSC-065).
+"""delimitus.com: the landing page, its privacy page at ``/privacy``, and the one thing it posts
+to, ``/pilot-request`` (SSC-065).
 
 Nothing else answers: no docs, no health path, no cookies. ``www.`` and any other name in
 ``redirect_hosts`` moves permanently to the origin. A pilot request is accepted only from the
@@ -97,10 +98,22 @@ async def _read_capped(request: Request, cap: int) -> bytes | None:
     return b"".join(chunks)
 
 
+def _serve(page: Page, request: Request) -> Response:
+    cache = {"etag": page.etag, "cache-control": f"public, max-age={PAGE_MAX_AGE}"}
+    if page.etag in request.headers.get("if-none-match", ""):
+        return Response(status_code=304, headers=cache)
+    return Response(
+        page.body,
+        media_type="text/html; charset=utf-8",
+        headers={**cache, "content-security-policy": page.csp},
+    )
+
+
 def create_app(  # noqa: PLR0913  (keyword-only collaborators)
     page: Page,
     store: PilotStore,
     *,
+    privacy: Page,
     origin: str,
     redirect_hosts: frozenset[str] = frozenset(),
     trusted_hops: int = 0,
@@ -128,14 +141,11 @@ def create_app(  # noqa: PLR0913  (keyword-only collaborators)
 
     @app.api_route("/", methods=["GET", "HEAD"])
     def index(request: Request) -> Response:
-        cache = {"etag": page.etag, "cache-control": f"public, max-age={PAGE_MAX_AGE}"}
-        if page.etag in request.headers.get("if-none-match", ""):
-            return Response(status_code=304, headers=cache)
-        return Response(
-            page.body,
-            media_type="text/html; charset=utf-8",
-            headers={**cache, "content-security-policy": page.csp},
-        )
+        return _serve(page, request)
+
+    @app.api_route("/privacy", methods=["GET", "HEAD"])
+    def privacy_page(request: Request) -> Response:
+        return _serve(privacy, request)
 
     @app.post("/pilot-request")
     async def pilot_request(request: Request) -> Response:  # noqa: PLR0911  (one return a check)
