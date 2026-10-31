@@ -71,9 +71,18 @@ redirected to the apex by the service.
   per page load, with no fade. Under reduced motion, or with no IntersectionObserver, and with
   JavaScript off, the bars show at full width.
 
+## Nav
+
+A solid white 60px bar: the brand, five section links (Product, Integrations, Security, Pricing,
+FAQ), then Sign in and Request access. The link for the section under the bar carries
+`aria-current="true"`, set by one IntersectionObserver; with none, no link is marked. Below 760px
+the links and Sign in move into a menu behind a checkbox and its label, so it opens without
+JavaScript; the script closes it on a link or Escape and keeps the label's `aria-expanded`. The
+menu slides down, and under reduced motion just appears. A skip link to `#how` comes first.
+
 ## Sign in
 
-The nav's Sign in button is the page's one link to the console's sign-in,
+The nav's Sign in link is the page's one link to the console's sign-in,
 `https://console.delimitus.com/login`; a link is a navigation, not a load, so the content security
 policy needs no change. `page.py`'s check allows that exact `href` (`SIGN_IN`) and still refuses
 every other `href`, `src` or `action` to another origin.

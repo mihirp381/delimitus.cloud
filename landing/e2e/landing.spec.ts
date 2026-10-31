@@ -45,35 +45,107 @@ test('loads only from its own origin, sets no cookie and breaks no policy', asyn
   expect(await page.context().cookies()).toEqual([]);
 });
 
+const LOGIN = 'https://console.delimitus.com/login';
+const NAV = [['#how', 'Product'], ['#works', 'Integrations'], ['#security', 'Security'], ['#cost', 'Pricing'], ['#faq', 'FAQ']];
+const wide = (page: Page) => (page.viewportSize()?.width ?? 0) >= 760;
+
 test('signs in at the console from the nav, the one link there', async ({ page }) => {
   await page.goto('/');
-  const signIn = page.locator('a[href="https://console.delimitus.com/login"]');
-  await expect(signIn).toHaveCount(1);
-  await expect(page.locator('.nav__act a[href="https://console.delimitus.com/login"]')).toHaveCount(1);
-  const navSignIn = page.locator('.nav__act .btn--ghost');
-  await expect(navSignIn).toHaveText('Sign in');
-  await expect(navSignIn).toBeVisible();
+  await expect(page.locator(`a[href="${LOGIN}"]`)).toHaveCount(1);
+  const signIn = page.locator(`.nav a[href="${LOGIN}"]`);
+  await expect(signIn).toHaveText('Sign in');
+  await expect(signIn).not.toHaveClass(/btn/);
   await expect(page.locator('.hero__cta a', { hasText: 'Sign in' })).toHaveCount(0);
-  // WebKit leaves links out of the Tab order by default, so focus it directly.
-  await navSignIn.focus();
-  await expect(navSignIn).toBeFocused();
+  if (!wide(page)) await page.locator('.nav__burger').click();
+  await expect(signIn).toBeVisible();
+  await signIn.focus();
+  await expect(signIn).toBeFocused();
 });
 
-test('the nav shows both buttons, and all seven links on a wide screen', async ({ page }) => {
+test('the nav shows five section links, Sign in and the call to action on a wide screen', async ({ page }) => {
   await page.goto('/');
-  const buttons = page.locator('.nav__act .btn');
-  await expect(buttons).toHaveText(['Sign in', 'Request a pilot']);
-  for (const button of await buttons.all()) await expect(button).toBeInViewport({ ratio: 1 });
   const links = page.locator('.nav__links a');
-  await expect(links).toHaveCount(7);
-  if ((page.viewportSize()?.width ?? 0) >= 1440) {
-    for (const link of await links.all()) await expect(link).toBeVisible();
-    expect(await links.evaluateAll((all) => all.map((a) => a.getAttribute('href')))).toEqual(
-      ['#how', '#example', '#works', '#get', '#security', '#cost', '#faq'],
-    );
-  } else {
-    await expect(page.locator('.nav__links')).toBeHidden();
+  expect(await links.evaluateAll((all) => all.map((a) => [a.getAttribute('href'), a.textContent]))).toEqual(NAV);
+  const cta = page.locator('.nav__cta');
+  await expect(cta).toHaveText('Request access');
+  await expect(cta).toHaveAttribute('href', '#pilot');
+  await expect(cta).toBeInViewport({ ratio: 1 });
+  expect(await cta.evaluate((el) => el.getBoundingClientRect().height)).toBe(36);
+  expect(await page.locator('.nav').evaluate((el) => el.getBoundingClientRect().height)).toBe(60);
+  if (!wide(page)) {
+    for (const link of await links.all()) await expect(link).toBeHidden();
+    await expect(page.locator('.nav__signin')).toBeHidden();
+    await expect(page.locator('.nav__burger')).toBeVisible();
+    return;
   }
+  await expect(page.locator('.nav__burger')).toBeHidden();
+  for (const link of await links.all()) await expect(link).toBeInViewport({ ratio: 1 });
+  await expect(page.locator('.nav__signin')).toBeInViewport({ ratio: 1 });
+  await expect(page.locator('.nav__panel > .btn')).toBeHidden();
+});
+
+test('the phone menu opens, closes on a link and on Escape', async ({ page }) => {
+  test.skip(wide(page));
+  await page.goto('/');
+  const burger = page.locator('.nav__burger');
+  const panel = page.locator('.nav__panel');
+  await expect(panel).toBeHidden();
+  await expect(burger).toHaveAttribute('aria-expanded', 'false');
+  await burger.click();
+  await expect(burger).toHaveAttribute('aria-expanded', 'true');
+  for (const link of await page.locator('.nav__links a').all()) await expect(link).toBeVisible();
+  await expect(page.locator('.nav__signin')).toBeVisible();
+  const cta = panel.locator('.btn');
+  await expect(cta).toHaveText('Request access');
+  await expect(cta).toBeVisible();
+  expect(await cta.evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(300);
+  await page.locator('.nav__links a', { hasText: 'Security' }).click();
+  await expect(panel).toBeHidden();
+  await expect(burger).toHaveAttribute('aria-expanded', 'false');
+  await expect(page).toHaveURL(/#security$/);
+  await burger.click();
+  await expect(panel).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
+test('the nav marks the section in view', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('#security').evaluate((el) => el.scrollIntoView());
+  const current = page.locator('.nav__links a[aria-current="true"]');
+  await expect(current).toHaveCount(1);
+  await expect(current).toHaveText('Security');
+  await page.locator('#faq').evaluate((el) => el.scrollIntoView());
+  await expect(current).toHaveText('FAQ');
+  await expect(current).toHaveCount(1);
+});
+
+test('the skip link shows on focus and goes to the content', async ({ page }) => {
+  await page.goto('/');
+  const skip = page.locator('body > a.skip');
+  await expect(skip).toHaveAttribute('href', '#how');
+  expect(await page.evaluate(() => document.body.firstElementChild?.className)).toBe('skip');
+  expect(await skip.evaluate((el) => el.getBoundingClientRect().width)).toBeLessThanOrEqual(1);
+  await skip.focus();
+  await expect(skip).toBeFocused();
+  await expect(skip).toBeInViewport({ ratio: 1 });
+  expect(await skip.evaluate((el) => el.getBoundingClientRect().width)).toBeGreaterThan(40);
+});
+
+test('buttons have a 10px radius', async ({ page }) => {
+  await page.goto('/');
+  for (const btn of await page.locator('.btn').all()) await expect(btn).toHaveCSS('border-radius', '10px');
+});
+
+test('every footer link resolves', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('footer .foot__h')).toHaveText(['Product', 'Trust', 'Account']);
+  await expect(page.locator('footer a[href="/privacy"]')).toHaveCount(1);
+  await expect(page.locator(`footer a[href="${LOGIN}"]`)).toHaveCount(0);
+  const hrefs = await page.locator('footer a[href^="#"]').evaluateAll((all) => all.map((a) => a.getAttribute('href')!));
+  for (const href of hrefs) await expect(page.locator(href)).toHaveCount(1);
 });
 
 test('the privacy page loads only from its own origin and links back home', async ({ page, baseURL }) => {
@@ -356,6 +428,14 @@ test.describe('reduced motion', () => {
 
 test.describe('without JavaScript', () => {
   test.use({ javaScriptEnabled: false });
+  test('the phone menu still opens and closes', async ({ page }) => {
+    test.skip(wide(page));
+    await page.goto('/');
+    await page.locator('.nav__burger').click();
+    await expect(page.locator('.nav__panel .btn')).toBeVisible();
+    await page.locator('.nav__burger').click();
+    await expect(page.locator('.nav__panel')).toBeHidden();
+  });
   test('shows the default table', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('#calcIn')).toBeHidden();
@@ -391,7 +471,7 @@ test.describe('without JavaScript', () => {
     await form.locator('[name="company"]').fill('Example Logistics');
     const [answer] = await Promise.all([
       page.waitForResponse((r) => r.url().endsWith('/pilot-request')),
-      form.getByRole('button', { name: 'Request a pilot' }).click(),
+      form.getByRole('button', { name: 'Request access' }).click(),
     ]);
     expect(answer.status()).toBe(200);
     await expect(page.getByText('We have your request and will reply by email.')).toBeVisible();
@@ -403,7 +483,7 @@ test('the form confirms only on the server answer', async ({ page }, info) => {
   test.skip(info.project.name !== 'chromium-1440');
   await page.goto('/');
   const form = page.locator('#pilotForm');
-  await form.getByRole('button', { name: 'Request a pilot' }).click();
+  await form.getByRole('button', { name: 'Request access' }).click();
   await expect(page.locator('#formStatus')).toContainText('Check the highlighted fields');
   await expect(form.locator('[name="email"]')).toHaveAttribute('aria-invalid', 'true');
   await expect(page.locator('#formDone')).toBeHidden();
@@ -411,7 +491,7 @@ test('the form confirms only on the server answer', async ({ page }, info) => {
   await form.locator('[name="lastName"]').fill('Ortiz');
   await form.locator('[name="email"]').fill('dana@example.com');
   await form.locator('[name="company"]').fill('Example Logistics');
-  await form.getByRole('button', { name: 'Request a pilot' }).click();
+  await form.getByRole('button', { name: 'Request access' }).click();
   await expect(page.locator('#formDone')).toBeVisible();
   await expect(form).toBeHidden();
 });

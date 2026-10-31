@@ -498,3 +498,65 @@ def test_the_footer_links_the_privacy_page() -> None:
     footer = re.search(r"<footer>.*?</footer>", HTML, flags=re.S)
     assert footer is not None
     assert '<a href="/privacy">Privacy</a>' in footer[0]
+
+
+def test_the_nav_names_five_sections_and_one_sign_in() -> None:
+    nav = re.search(r'<nav class="nav".*?</nav>', HTML, flags=re.S)
+    assert nav is not None
+    links = re.search(r'<div class="nav__links">(.*?)</div>', nav[0], flags=re.S)
+    assert links is not None
+    assert re.findall(r'<a href="(#[a-z]+)">([^<]+)</a>', links[1]) == [
+        ("#how", "Product"),
+        ("#works", "Integrations"),
+        ("#security", "Security"),
+        ("#cost", "Pricing"),
+        ("#faq", "FAQ"),
+    ]
+    assert f'<a class="nav__signin" href="{SIGN_IN}">Sign in</a>' in nav[0]
+    assert '<input type="checkbox" id="navMenu" class="nav__check">' in nav[0]
+    assert '<label for="navMenu" class="nav__burger" aria-label="Menu">' in nav[0]
+    assert re.search(r"\son[a-z]+\s*=", nav[0]) is None
+
+
+def test_the_call_to_action_is_request_access() -> None:
+    assert re.findall(r">Request a pilot<", HTML) == [">Request a pilot<"]
+    assert HTML.count('href="#pilot">Request access</a>') == 4
+    assert '<button class="btn btn--primary" type="submit">Request access</button>' in HTML
+
+
+def test_the_skip_link_comes_first() -> None:
+    assert re.search(r'<body>\s*<a class="skip" href="#how">Skip to content</a>', HTML)
+
+
+def test_every_in_page_link_has_a_target() -> None:
+    ids = set(re.findall(r'\sid="([^"]+)"', HTML))
+    targets = set(re.findall(r'href="#([^"]+)"', HTML))
+    assert targets - ids == set()
+
+
+def test_section_labels_match_the_nav() -> None:
+    for section, label in (("works", "Integrations"), ("cost", "Pricing"), ("faq", "FAQ")):
+        block = re.search(
+            rf'<section[^>]*id="{section}".*?class="label">([^<]+)<', HTML, flags=re.S
+        )
+        assert block is not None
+        assert block[1] == label
+
+
+def test_buttons_have_a_ten_pixel_radius() -> None:
+    btn = re.search(r"\n\.btn \{(.*?)\}", HTML, flags=re.S)
+    assert btn is not None
+    assert "border-radius: 10px;" in btn[1]
+    assert "980px" not in HTML
+
+
+def test_the_footer_has_three_columns_and_no_sign_in() -> None:
+    footer = re.search(r"<footer>.*?</footer>", HTML, flags=re.S)
+    assert footer is not None
+    assert re.findall(r'<h2 class="foot__h">([^<]+)</h2>', footer[0]) == [
+        "Product",
+        "Trust",
+        "Account",
+    ]
+    assert footer[0].count('href="/privacy"') == 1
+    assert SIGN_IN not in footer[0]
