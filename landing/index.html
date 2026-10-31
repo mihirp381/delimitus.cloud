@@ -75,7 +75,7 @@
   --r-sm: 6px; --r-md: 12px; --r-lg: 18px; --r-xl: 24px; --r-2xl: 32px;
   --pad: clamp(20px, 5vw, 64px);
   --maxw: 1200px;
-  --nav-h: 64px;
+  --nav-h: 60px;
   --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 32px -12px rgba(0, 0, 0, 0.10);
   --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.04), 0 34px 70px -34px rgba(29, 29, 31, 0.28);
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
@@ -124,39 +124,71 @@ section[id] { scroll-margin-top: var(--nav-h); }
 }
 
 /* ── nav ─────────────────────────────────────────────────────────────── */
-.nav {
-  position: sticky; top: 0; z-index: 40;
-  background: rgba(255, 255, 255, 0.72);
-  -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+.skip {
+  position: absolute; left: 12px; top: 10px; z-index: 60; padding: 8px 14px; border-radius: 10px;
+  background: var(--ink); color: #FFFFFF; font-size: 0.875rem; font-weight: 500; text-decoration: none;
 }
-body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; background: rgba(255, 255, 255, 0.9); }
-.nav__in { display: flex; align-items: center; gap: 24px; height: calc(var(--nav-h) - 1px); }
+.skip:not(:focus) { width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.nav { position: sticky; top: 0; z-index: 40; background: #FFFFFF; border-bottom: 1px solid rgba(0, 0, 0, 0.08); }
+.nav__in { display: flex; align-items: center; gap: 40px; height: calc(var(--nav-h) - 1px); }
 .brand { display: flex; align-items: center; gap: 4.5px; color: var(--ink); text-decoration: none; }
 .brand__mark { display: block; flex: none; width: 22px; height: 22px; }
 .brand__word { display: block; flex: none; width: 82.9px; height: 13.9px; }
 .nav .brand { gap: 5px; }
 .nav .brand__mark { width: 24px; height: 24px; }
 .nav .brand__word { width: 91.2px; height: 15.3px; }
-.nav__links { display: flex; gap: 32px; margin-left: auto; }
-.nav__links a { color: var(--ink-2); text-decoration: none; font-size: 0.9rem; letter-spacing: -0.005em; white-space: nowrap; transition: color 140ms var(--ease); }
-.nav__links a:hover { color: var(--ink); }
-.nav__act { display: flex; align-items: center; gap: 12px; margin-left: 12px; }
-.nav__act .btn { white-space: nowrap; }
-@media (max-width: 1099px) { .nav__links { gap: 24px; } .nav__links .nav__wide { display: none; } }
-@media (max-width: 860px) { .nav__in { gap: 18px; } .nav__links { gap: 18px; } .nav__links .nav__mid { display: none; } .nav__act { margin-left: 0; gap: 10px; } }
-@media (max-width: 699px) { .nav__links { display: none; } .nav__act { margin-left: auto; } }
+.nav__check { display: none; }
+.nav__menu, .nav__panel { display: flex; flex: 1; align-items: center; min-width: 0; }
+.nav__panel { gap: 24px; }
+.nav__links { display: flex; gap: 28px; }
+.nav__links a, .nav__signin { font-size: 0.875rem; font-weight: 500; letter-spacing: -0.005em; text-decoration: none; white-space: nowrap; transition: color 140ms var(--ease); }
+.nav__links a { color: var(--ink-2); }
+.nav__links a:hover, .nav__links a[aria-current="true"] { color: var(--ink); }
+.nav__links a[aria-current="true"] { text-decoration: underline 2px var(--accent); text-underline-offset: 7px; }
+.nav__signin { margin-left: auto; color: var(--ink); }
+.nav__signin:hover { color: var(--accent-ink); }
+.nav__in > .nav__cta { display: none; }
+.nav__burger { display: none; }
+@media (max-width: 759px) {
+  .nav__in { gap: 8px; }
+  .nav__check { display: block; position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+  .nav__menu { position: absolute; top: 100%; left: 0; right: 0; overflow: hidden; pointer-events: none; }
+  .nav__panel {
+    flex-direction: column; align-items: stretch; padding: 4px var(--pad) 20px;
+    background: #FFFFFF; border-bottom: 1px solid rgba(0, 0, 0, 0.08); box-shadow: 0 18px 30px -24px rgba(0, 0, 0, 0.28);
+    transform: translateY(-100%); visibility: hidden; transition: transform 240ms var(--ease), visibility 0s linear 240ms;
+  }
+  .nav__check:checked ~ .nav__menu .nav__panel { transform: none; visibility: visible; pointer-events: auto; transition: transform 240ms var(--ease), visibility 0s; }
+  .nav__links { flex-direction: column; gap: 0; }
+  .nav__links a, .nav__signin { display: block; padding: 14px 0; font-size: 1rem; }
+  .nav__signin { margin-left: 0; }
+  .nav__panel { gap: 0; }
+  .nav__panel > .btn { display: flex; height: auto; margin-top: 8px; padding: 12px 24px; font-size: 1rem; }
+  .nav__in > .nav__cta { display: inline-flex; margin-left: auto; }
+  .nav__burger { display: flex; flex: none; align-items: center; justify-content: center; width: 40px; height: 40px; margin-right: -8px; border-radius: 10px; cursor: pointer; }
+  .nav__check:focus-visible ~ .nav__burger { outline: 2px solid var(--accent); outline-offset: 0; }
+  .nav__bars, .nav__bars::before, .nav__bars::after { display: block; width: 18px; height: 2px; border-radius: 2px; background: var(--ink); transition: transform 200ms var(--ease), background 0s; }
+  .nav__bars { position: relative; }
+  .nav__bars::before, .nav__bars::after { content: ""; position: absolute; left: 0; }
+  .nav__bars::before { transform: translateY(-6px); }
+  .nav__bars::after { transform: translateY(6px); }
+  .nav__check:checked ~ .nav__burger .nav__bars { background: transparent; }
+  .nav__check:checked ~ .nav__burger .nav__bars::before { transform: rotate(45deg); }
+  .nav__check:checked ~ .nav__burger .nav__bars::after { transform: rotate(-45deg); }
+}
+@media (max-width: 759px) and (prefers-reduced-motion: reduce) {
+  .nav__panel, .nav__check:checked ~ .nav__menu .nav__panel, .nav__bars, .nav__bars::before, .nav__bars::after { transition: none; }
+}
 @media (max-width: 400px) {
-  .nav__in { gap: 12px; }
   .nav .brand__mark { width: 22px; height: 22px; }
   .nav .brand__word { width: 82.9px; height: 13.9px; }
-  .nav__act .btn { padding: 9px 12px; }
+  .nav__cta.btn { padding: 0 12px; }
 }
 
 /* ── buttons and chips ───────────────────────────────────────────────── */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  padding: 12px 24px; border-radius: 980px; border: 1px solid transparent;
+  padding: 12px 24px; border-radius: 10px; border: 1px solid transparent;
   font-size: 1rem; font-weight: 500; letter-spacing: -0.015em; text-decoration: none; cursor: pointer; white-space: nowrap;
   transition: background 160ms var(--ease), border-color 160ms var(--ease), color 160ms var(--ease), transform 160ms var(--ease);
 }
@@ -164,7 +196,7 @@ body.is-entering .nav { -webkit-backdrop-filter: none; backdrop-filter: none; ba
 .btn--primary:hover { background: var(--accent-hi); }
 .btn--ghost { background: rgba(255, 255, 255, 0.92); border-color: var(--accent-ink); color: var(--accent-ink); }
 .btn--ghost:hover { background: var(--accent-soft); }
-.btn--sm { padding: 10px 16px; font-size: 0.8rem; }
+.btn--sm { height: 36px; padding: 0 14px; font-size: 0.875rem; }
 .btn:active { transform: scale(0.98); }
 
 .chip {
@@ -705,11 +737,17 @@ table.tbl tr:last-child td { border-bottom: 0; }
 .cta .lede { color: var(--ink-2); max-width: 40ch; text-wrap: balance; }
 
 /* ── footer ──────────────────────────────────────────────────────────── */
-.foot { padding-top: 44px; padding-bottom: 44px; display: flex; flex-wrap: wrap; gap: 22px 40px; justify-content: space-between; align-items: flex-start; }
+.foot { padding-top: 56px; padding-bottom: 40px; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 32px 40px; }
 .foot__brand { display: flex; flex-direction: column; gap: 12px; }
-.foot__links { display: flex; flex-wrap: wrap; gap: 0 24px; margin-top: -10px; }
-.foot__links a { color: var(--ink-2); font-size: 0.85rem; text-decoration: none; padding-block: 10px; }
-.foot__links a:hover { color: var(--ink); text-decoration: underline; }
+.foot__links { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px 40px; }
+.foot__col { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.foot__h { margin: 0 0 6px; font-size: 0.8125rem; font-weight: 600; letter-spacing: -0.005em; color: var(--ink); }
+.foot__col a { color: var(--ink-3); font-size: 0.8125rem; text-decoration: none; padding-block: 5px; transition: color 140ms var(--ease); }
+.foot__col a:hover { color: var(--ink); }
+.foot__base { padding-bottom: 32px; }
+.foot__copy { margin: 0; padding-top: 20px; border-top: 1px solid var(--line); font-size: 0.8125rem; color: var(--ink-3); }
+@media (max-width: 860px) { .foot { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) { .foot__links { grid-template-columns: minmax(0, 1fr); gap: 24px; } }
 
 /* ── the prompt: one line the page keeps coming back to ───────────────── */
 .prompt {
@@ -999,6 +1037,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
 </style>
 </head>
 <body>
+<a class="skip" href="#how">Skip to content</a>
 
 <nav class="nav" aria-label="Main">
   <div class="wrap nav__in">
@@ -1006,18 +1045,21 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       <svg class="brand__mark" width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" focusable="false"><defs><linearGradient id="dl-nav" x1="3.52" y1="16.98" x2="18.06" y2="6.42" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#0071E3"/><stop offset="0.22" stop-color="#0A84FF"/><stop offset="0.5" stop-color="#6E5BFF"/><stop offset="0.7" stop-color="#C24BF0"/><stop offset="0.87" stop-color="#FF378C"/><stop offset="1" stop-color="#FF9F0A"/></linearGradient></defs><path fill="url(#dl-nav)" fill-rule="evenodd" d="M6 3H11.5A8 8 0 0 1 11.5 19H6A2 2 0 0 1 4 17V5A2 2 0 0 1 6 3ZM7.52 16L10.16 16A0.35 0.35 0 0 0 10.49 15.78L14.25 6.48A0.35 0.35 0 0 0 13.92 6L11.28 6A0.35 0.35 0 0 0 10.95 6.22L7.19 15.52A0.35 0.35 0 0 0 7.52 16Z"/></svg>
       <svg class="brand__word" width="82.9" height="13.9" viewBox="0 -1473 8958 1506" aria-hidden="true" focusable="false"><path fill="currentColor" d="M0 0V-1440H466Q483 -1440 536 -1439Q589 -1438 638 -1432Q812 -1411 933 -1311Q1054 -1211 1117 -1057Q1180 -903 1180 -720Q1180 -537 1117 -383Q1054 -229 933 -129Q812 -29 638 -8Q589 -2 536 -1Q483 0 466 0ZM276 -256H466Q493 -256 539 -257.5Q585 -259 622 -266Q716 -285 775.5 -354Q835 -423 863.5 -520Q892 -617 892 -720Q892 -828 862.5 -925Q833 -1022 773 -1089Q713 -1156 622 -1174Q585 -1182 539 -1183Q493 -1184 466 -1184H276ZM1882 30Q1716 30 1589.5 -41.5Q1463 -113 1391.5 -238.5Q1320 -364 1320 -526Q1320 -703 1390 -834Q1460 -965 1583 -1037.5Q1706 -1110 1866 -1110Q2036 -1110 2155 -1030Q2274 -950 2331 -805Q2388 -660 2371 -464H2102V-564Q2102 -729 2049.5 -801.5Q1997 -874 1878 -874Q1739 -874 1673.5 -789.5Q1608 -705 1608 -540Q1608 -389 1673.5 -306.5Q1739 -224 1866 -224Q1946 -224 2003 -259Q2060 -294 2090 -360L2362 -282Q2301 -134 2169.5 -52Q2038 30 1882 30ZM1524 -464V-666H2240V-464ZM2576 0V-1470H2848V0ZM3128 -1230V-1470H3400V-1230ZM3128 0V-1080H3400V0ZM4960 0V-638Q4960 -745 4909.5 -804.5Q4859 -864 4770 -864Q4713 -864 4671 -837.5Q4629 -811 4605.5 -763.5Q4582 -716 4582 -654L4468 -730Q4468 -841 4520.5 -926Q4573 -1011 4661.5 -1058.5Q4750 -1106 4858 -1106Q5043 -1106 5137.5 -996.5Q5232 -887 5232 -710V0ZM3658 0V-1080H3898V-722H3932V0ZM4310 0V-638Q4310 -745 4259.5 -804.5Q4209 -864 4120 -864Q4035 -864 3983.5 -805.5Q3932 -747 3932 -654L3818 -734Q3818 -840 3871 -924Q3924 -1008 4013.5 -1057Q4103 -1106 4214 -1106Q4341 -1106 4422.5 -1052Q4504 -998 4543 -908Q4582 -818 4582 -710V0ZM5472 -1230V-1470H5744V-1230ZM5472 0V-1080H5744V0ZM6652 0Q6540 21 6432.5 18.5Q6325 16 6240.5 -19.5Q6156 -55 6112 -134Q6072 -208 6070 -284.5Q6068 -361 6068 -458V-1380H6340V-474Q6340 -411 6341.5 -360.5Q6343 -310 6362 -280Q6398 -223 6477 -218Q6556 -213 6652 -226ZM5884 -870V-1080H6652V-870ZM7254 32Q7127 32 7047 -11Q6967 -54 6922.5 -120Q6878 -186 6859 -257.5Q6840 -329 6836 -388Q6832 -447 6832 -474V-1080H7108V-570Q7108 -533 7112 -475.5Q7116 -418 7137 -360Q7158 -302 7205.5 -263Q7253 -224 7340 -224Q7375 -224 7415 -235Q7455 -246 7490 -277.5Q7525 -309 7547.5 -370.5Q7570 -432 7570 -532L7726 -458Q7726 -330 7674 -218Q7622 -106 7517.5 -37Q7413 32 7254 32ZM7604 0V-358H7570V-1080H7844V0ZM8506 30Q8302 30 8176.5 -62.5Q8051 -155 8024 -324L8302 -366Q8319 -290 8377.5 -247Q8436 -204 8526 -204Q8600 -204 8640 -232.5Q8680 -261 8680 -312Q8680 -344 8664 -363.5Q8648 -383 8592.5 -402Q8537 -421 8420 -452Q8288 -486 8209 -528Q8130 -570 8095 -628.5Q8060 -687 8060 -770Q8060 -874 8113 -950.5Q8166 -1027 8262.5 -1068.5Q8359 -1110 8490 -1110Q8617 -1110 8715 -1071Q8813 -1032 8873.5 -960Q8934 -888 8948 -790L8670 -740Q8663 -800 8618 -835Q8573 -870 8496 -876Q8421 -881 8375.5 -856Q8330 -831 8330 -784Q8330 -756 8349.5 -737Q8369 -718 8430.5 -698Q8492 -678 8618 -646Q8741 -614 8815.5 -571.5Q8890 -529 8924 -469.5Q8958 -410 8958 -326Q8958 -160 8838 -65Q8718 30 8506 30Z"/></svg>
     </a>
-    <div class="nav__links">
-      <a href="#how">How it works</a>
-      <a class="nav__wide" href="#example">Example</a>
-      <a class="nav__mid" href="#works">Works with</a>
-      <a class="nav__wide" href="#get">What you get</a>
-      <a href="#security">Security</a>
-      <a href="#cost">Cost</a>
-      <a class="nav__mid" href="#faq">Questions</a>
-    </div>
-    <div class="nav__act">
-      <a class="btn btn--ghost btn--sm" href="https://console.delimitus.com/login">Sign in</a>
-      <a class="btn btn--primary btn--sm" href="#pilot">Request a pilot</a>
+    <a class="btn btn--primary btn--sm nav__cta" href="#pilot">Request access</a>
+    <input type="checkbox" id="navMenu" class="nav__check">
+    <label for="navMenu" class="nav__burger" aria-label="Menu"><span class="nav__bars"></span></label>
+    <div class="nav__menu">
+      <div class="nav__panel" id="navPanel">
+        <div class="nav__links">
+          <a href="#how">Product</a>
+          <a href="#works">Integrations</a>
+          <a href="#security">Security</a>
+          <a href="#cost">Pricing</a>
+          <a href="#faq">FAQ</a>
+        </div>
+        <a class="nav__signin" href="https://console.delimitus.com/login">Sign in</a>
+        <a class="btn btn--primary btn--sm nav__go" href="#pilot">Request access</a>
+      </div>
     </div>
   </div>
 </nav>
@@ -1033,7 +1075,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
         <h1 class="h1">Build with your coding agent.<br><span class="grad">Deploy on Delimitus.</span></h1>
         <p class="lede" data-claim="minutes">Your agent writes the code. Delimitus handles deployment, infrastructure, security and company access, so you get a secure, shareable internal app in minutes, not weeks.</p>
         <div class="hero__cta">
-          <a class="btn btn--primary" href="#pilot">Request a pilot</a>
+          <a class="btn btn--primary" href="#pilot">Request access</a>
           <a class="btn btn--ghost" href="#how">See how it works</a>
         </div>
       </div>
@@ -1349,7 +1391,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
 
 <section class="band band--alt" id="works" data-claims>
   <div class="wrap band__grid">
-    <div class="band__label"><span class="rule"></span><p class="label">Works with</p></div>
+    <div class="band__label"><span class="rule"></span><p class="label">Integrations</p></div>
     <div class="stack stack--lg">
       <div class="head">
         <h2 class="h2" data-claim="tools">One deployment target for every coding agent.</h2>
@@ -1499,7 +1541,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
 
 <section class="band" id="cost">
   <div class="wrap band__grid">
-    <div class="band__label"><span class="rule"></span><p class="label">Cost</p></div>
+    <div class="band__label"><span class="rule"></span><p class="label">Pricing</p></div>
     <div class="stack stack--lg">
       <div class="head">
         <h2 class="h2">Building apps with AI is <span class="grad">easy and fun.</span></h2>
@@ -1625,11 +1667,11 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
 
 <section class="band band--alt" id="faq" data-claims>
   <div class="wrap band__grid">
-    <div class="band__label"><span class="rule"></span><h2 class="label">Questions</h2></div>
+    <div class="band__label"><span class="rule"></span><h2 class="label">FAQ</h2></div>
     <div class="faq">
       <details open>
         <summary>What does it cost?</summary>
-        <p data-claim="price">Pricing is agreed with each pilot. <a href="#cost">The cost section</a> shows what doing it yourself costs.</p>
+        <p data-claim="price">Pricing is agreed with each pilot. <a href="#cost">The pricing section</a> shows what doing it yourself costs.</p>
       </details>
       <details>
         <summary>Is Delimitus a coding agent?</summary>
@@ -1661,7 +1703,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       </details>
       <details>
         <summary>How do I get in?</summary>
-        <p data-claim="pilot">Delimitus is in private pilot. <a href="#pilot">Request a pilot</a> below.</p>
+        <p data-claim="pilot">Delimitus is in private pilot. <a href="#pilot">Request access</a> below.</p>
       </details>
     </div>
   </div>
@@ -1682,7 +1724,7 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
         <label class="wide">Tools you build with <span class="opt">(optional)</span><input name="tools" maxlength="200" placeholder="For example Claude Code, Cursor"></label>
         <div class="form__trap" aria-hidden="true"><label>Leave this empty<input name="website" tabindex="-1" autocomplete="off"></label></div>
         <div class="form__go">
-          <button class="btn btn--primary" type="submit">Request a pilot</button>
+          <button class="btn btn--primary" type="submit">Request access</button>
           <p class="form__status" id="formStatus" role="status" aria-live="polite"></p>
         </div>
         <p class="form__fine" data-claim="retention">We keep these details for 12 months to answer your request, and use them only for that. To have them deleted sooner, write to <a href="mailto:privacy@delimitus.com">privacy@delimitus.com</a>.</p>
@@ -1707,13 +1749,27 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
       <p class="small">Where coding agents deploy company software.</p>
     </div>
     <nav class="foot__links" aria-label="Footer">
-      <a href="#how">How it works</a>
-      <a href="#security">Security</a>
-      <a href="#cost">Cost</a>
-      <a href="#pilot">Request a pilot</a>
-      <a href="/privacy">Privacy</a>
+      <div class="foot__col">
+        <h2 class="foot__h">Product</h2>
+        <a href="#how">How it works</a>
+        <a href="#example">Example</a>
+        <a href="#get">What you get</a>
+        <a href="#works">Integrations</a>
+      </div>
+      <div class="foot__col">
+        <h2 class="foot__h">Trust</h2>
+        <a href="#security">Security</a>
+        <a href="#cost">Pricing</a>
+        <a href="#faq">FAQ</a>
+        <a href="/privacy">Privacy</a>
+      </div>
+      <div class="foot__col">
+        <h2 class="foot__h">Account</h2>
+        <a href="#pilot">Request access</a>
+      </div>
     </nav>
   </div>
+  <div class="wrap foot__base"><p class="foot__copy">© 2026 Delimitus</p></div>
 </footer>
 <script>
 (function () {
@@ -1828,6 +1884,46 @@ table.tbl--cmp tbody tr:last-child th { border-bottom: 0; }
 
   var calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var watching = "IntersectionObserver" in window;
+
+  /* ── nav: the phone menu and the section in view ──────────────────── */
+  var menu = document.getElementById("navMenu");
+  var burger = document.querySelector(".nav__burger");
+  if (menu && burger) {
+    var sync = function () { burger.setAttribute("aria-expanded", String(menu.checked)); };
+    var shut = function () { menu.checked = false; sync(); };
+    sync();
+    menu.addEventListener("change", sync);
+    document.getElementById("navPanel").addEventListener("click", function (e) { if (e.target.closest("a")) { shut(); } });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && menu.checked) { shut(); menu.focus(); } });
+  }
+  var spyLinks = document.querySelectorAll(".nav__links a");
+  if (watching && spyLinks.length) {
+    var bar = document.querySelector(".nav").offsetHeight;
+    var inView = [];
+    var spy = function () {
+      var best = null, bestKey = -Infinity;
+      inView.forEach(function (sec) {
+        var t = sec.getBoundingClientRect().top - bar;
+        var key = t <= 1 ? 1e6 + t : -t;
+        if (key > bestKey) { best = sec; bestKey = key; }
+      });
+      Array.prototype.forEach.call(spyLinks, function (a) {
+        if (best && a.getAttribute("href") === "#" + best.id) { a.setAttribute("aria-current", "true"); } else { a.removeAttribute("aria-current"); }
+      });
+    };
+    var spied = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        var i = inView.indexOf(en.target);
+        if (en.isIntersecting && i < 0) { inView.push(en.target); }
+        if (!en.isIntersecting && i >= 0) { inView.splice(i, 1); }
+      });
+      spy();
+    }, { rootMargin: "-" + bar + "px 0px -50% 0px" });
+    Array.prototype.forEach.call(spyLinks, function (a) {
+      var sec = document.querySelector(a.getAttribute("href"));
+      if (sec) { spied.observe(sec); }
+    });
+  }
 
   /* ── how it works: the prompt is typed, then the conversation grows one step at a time ── */
   var each = function (list, fn) { Array.prototype.forEach.call(list, fn); };
