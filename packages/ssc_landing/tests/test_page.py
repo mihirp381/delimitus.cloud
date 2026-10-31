@@ -515,12 +515,14 @@ def test_the_nav_names_five_sections_and_one_sign_in() -> None:
     assert f'<a class="nav__signin" href="{SIGN_IN}">Sign in</a>' in nav[0]
     assert '<input type="checkbox" id="navMenu" class="nav__check">' in nav[0]
     assert '<label for="navMenu" class="nav__burger" aria-label="Menu">' in nav[0]
+    order = [nav[0].index(x) for x in ("nav__cta", 'id="navMenu"', "nav__burger", "nav__panel")]
+    assert order == sorted(order)
     assert re.search(r"\son[a-z]+\s*=", nav[0]) is None
 
 
 def test_the_call_to_action_is_request_access() -> None:
-    assert re.findall(r">Request a pilot<", HTML) == [">Request a pilot<"]
-    assert HTML.count('href="#pilot">Request access</a>') == 4
+    assert "Request a pilot<" not in HTML
+    assert HTML.count('href="#pilot">Request access</a>') == 5
     assert '<button class="btn btn--primary" type="submit">Request access</button>' in HTML
 
 
@@ -559,4 +561,5 @@ def test_the_footer_has_three_columns_and_no_sign_in() -> None:
         "Account",
     ]
     assert footer[0].count('href="/privacy"') == 1
+    assert '<p class="foot__copy">© 2026 Delimitus</p>' in footer[0]
     assert SIGN_IN not in footer[0]

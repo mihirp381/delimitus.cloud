@@ -66,7 +66,7 @@ test('the nav shows five section links, Sign in and the call to action on a wide
   await page.goto('/');
   const links = page.locator('.nav__links a');
   expect(await links.evaluateAll((all) => all.map((a) => [a.getAttribute('href'), a.textContent]))).toEqual(NAV);
-  const cta = page.locator('.nav__cta');
+  const cta = page.locator(wide(page) ? '.nav__go' : '.nav__cta');
   await expect(cta).toHaveText('Request access');
   await expect(cta).toHaveAttribute('href', '#pilot');
   await expect(cta).toBeInViewport({ ratio: 1 });
@@ -81,7 +81,7 @@ test('the nav shows five section links, Sign in and the call to action on a wide
   await expect(page.locator('.nav__burger')).toBeHidden();
   for (const link of await links.all()) await expect(link).toBeInViewport({ ratio: 1 });
   await expect(page.locator('.nav__signin')).toBeInViewport({ ratio: 1 });
-  await expect(page.locator('.nav__panel > .btn')).toBeHidden();
+  await expect(page.locator('.nav__cta')).toBeHidden();
 });
 
 test('the phone menu opens, closes on a link and on Escape', async ({ page }) => {
@@ -109,6 +109,23 @@ test('the phone menu opens, closes on a link and on Escape', async ({ page }) =>
   await expect(panel).toBeHidden();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
+});
+
+test('the nav is in screen order for the keyboard', async ({ page, browserName }) => {
+  test.skip(browserName === 'webkit', 'WebKit leaves links out of the Tab order by default');
+  await page.goto('/');
+  await page.locator('.nav .brand').focus();
+  const next = async () => {
+    await page.keyboard.press('Tab');
+    return page.evaluate(() => document.activeElement?.className ?? '');
+  };
+  if (wide(page)) {
+    expect(await next()).toBe('');
+    await expect(page.locator('.nav__links a').first()).toBeFocused();
+  } else {
+    expect(await next()).toContain('nav__cta');
+    expect(await next()).toBe('nav__check');
+  }
 });
 
 test('the nav marks the section in view', async ({ page }) => {
