@@ -328,8 +328,8 @@ REMOVED = (
 )
 ADDED = (
     "Secure data connections",
-    "<span>“Deploy this on Delimitus.”</span> <span>Say it once. We run everything behind it."
-    " IT approves what matters.</span>",
+    '<p class="h3" data-claim="approvals"><span>“Deploy this on Delimitus.”</span>'
+    " <span>We run it. IT stays in control.</span></p>",
     "Northline Freight",
     "Cascade Linehaul",
     "Redwood Carriers",
